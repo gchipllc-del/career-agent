@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "career-agent"
+version = "0.1.0"
+description = "Injection-hardened, human-gated autonomous career agent: job discovery + résumé tailoring."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "gchipllc" }]
+keywords = ["resume", "job-search", "llm", "langgraph", "prompt-injection", "agent"]
+
+# The security core, the stdlib pipeline, and the web server run on pure stdlib
+# with ZERO runtime dependencies. Everything below is opt-in.
+dependencies = []
+
+[project.optional-dependencies]
+# Real LangGraph engine + OpenAI-compatible providers (Groq/OpenRouter/Ollama/OpenAI)
+graph = ["langgraph>=0.2", "langchain-openai>=0.1", "pydantic>=2"]
+# Claude Opus via the native Anthropic client
+anthropic = ["langchain-anthropic>=0.2"]
+# Durable graph checkpoints (pending approvals survive a restart)
+durable = ["langgraph-checkpoint-sqlite>=2"]
+# Résumé .pdf import + higher-fidelity .docx read/write
+resume = ["pypdf>=4", "python-docx>=1"]
+# Everything
+all = [
+    "langgraph>=0.2", "langchain-openai>=0.1", "langchain-anthropic>=0.2",
+    "langgraph-checkpoint-sqlite>=2", "pydantic>=2", "pypdf>=4", "python-docx>=1",
+]
+
+[project.urls]
+Repository = "https://github.com/gchipllc-del/career-agent"
+
+# Flat layout: list our modules explicitly so packaging never scans sibling files.
+[tool.setuptools]
+py-modules = ["core", "career_agent", "server", "jobs_search", "resume_io", "localenv"]

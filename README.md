@@ -1,7 +1,13 @@
 # Autonomous Career Agent
 
+[![tests](https://github.com/gchipllc-del/career-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/gchipllc-del/career-agent/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![python: 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
+
 Tailors a master résumé to a job posting under a **zero-fabrication** guarantee,
 with prompt-injection defense and a human-approval gate before anything is submitted.
+Discovers matching jobs across free APIs, and runs on **pure stdlib** (no install)
+in mock mode — optional extras switch on real LLMs and résumé import/export.
 
 ```
 scrape ─▶ sanitize ─▶ tailor ─▶ validate ─▶ [human approval] ─▶ submit
