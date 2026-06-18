@@ -1,0 +1,28 @@
+# The dashboard runs with ZERO installs in mock mode (stdlib only).
+# Install these to switch on the real LangGraph engine.
+#
+# IMPORTANT: the free providers (Groq / OpenRouter / Cerebras) are OpenAI-
+# compatible, so langchain-openai below is ALL you need for live LLM calls —
+# no provider-specific package required.
+langgraph>=0.2.0
+langchain-openai>=0.1.0
+pydantic>=2.0
+
+# Optional — only for LLM_PROVIDER=anthropic (Claude Opus, personal/paid):
+#   langchain-anthropic>=0.2.0
+# Ollama (LLM_PROVIDER=ollama — local, NO API key) needs no extra Python package;
+# it speaks the OpenAI-compatible API through langchain-openai above. You just
+# install the Ollama app and `ollama pull llama3.2`.
+
+# Optional — résumé drag-and-drop import + .docx export. Without these, .txt
+# import/export still works (stdlib), .docx falls back to a minimal stdlib
+# writer/reader, and PDF import is disabled with a friendly message:
+#   pypdf>=4.0          # parse uploaded PDF résumés
+#   python-docx>=1.0    # higher-fidelity .docx read + write
+
+# Optional — only for scraping a Job URL. You can skip ALL of these and just
+# paste the job description into the dashboard (fully free, no scraping):
+#   firecrawl-py>=1.0.0     # hosted, 1,000 free credits/month
+#   trafilatura>=2.0        # local, pure-Python, no key, lightest footprint
+
+# server.py uses the stdlib http.server — no FastAPI/uvicorn required.

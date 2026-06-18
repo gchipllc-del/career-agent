@@ -1,0 +1,15 @@
+# Personal config & secrets
+.env
+
+# Runtime state (persisted run store + graph checkpoints)
+*.sqlite
+*.sqlite-journal
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
