@@ -13,6 +13,8 @@ import hashlib
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -25,6 +27,8 @@ localenv.load()  # apply a personal .env (LLM_PROVIDER, API keys) before imports
 import core
 import jobs_search
 import resume_io
+import apply
+import apply_autofill
 
 # Prefer the real LangGraph engine when its deps are importable.
 try:
@@ -112,6 +116,19 @@ class RunStore:
 
 # Default to a file so runs persist; set RUNS_DB=":memory:" for an ephemeral store.
 RUNS = RunStore(os.getenv("RUNS_DB", "runs.sqlite"))
+
+# Assisted-apply: profile + application tracker, plus a dir for saved tailored
+# résumés the autofill driver uploads.
+APPLY = apply.ApplyStore(os.getenv("APPLY_DB", "applications.sqlite"))
+APPLY_DIR = Path(os.getenv("APPLY_DIR", "applications"))
+
+
+def _save_resume(app_id, text):
+    """Persist the tailored résumé as a .docx the autofill driver can upload."""
+    APPLY_DIR.mkdir(exist_ok=True)
+    path = APPLY_DIR / f"{app_id}.docx"
+    path.write_bytes(resume_io.to_docx(text))
+    return str(path.resolve())
 
 
 def _public(state):
@@ -253,7 +270,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(500, {"error": "dashboard.html not found"})
         if self.path == "/api/health":
             return self._send(200, {"engine": ENGINE, "mock_mode": MOCK,
-                                    "provider": PROVIDER, "model": MODEL})
+                                    "provider": PROVIDER, "model": MODEL,
+                                    "autofill": apply_autofill.HAVE_PLAYWRIGHT})
+        if self.path == "/api/profile":
+            return self._send(200, APPLY.get_profile())
+        if self.path == "/api/applications":
+            return self._send(200, {"applications": APPLY.list_applications()})
         if self.path.startswith("/api/runs/") and self.path.endswith("/events"):
             run_id = self.path[len("/api/runs/"):-len("/events")]
             with PROGRESS_LOCK:
@@ -351,6 +373,73 @@ class Handler(BaseHTTPRequestHandler):
                         resume_io.to_docx(text), base + ".docx",
                         "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
                 return self._send(400, {"error": "unknown export format"})
+
+            if self.path == "/api/profile":
+                data = self._body()
+                if not isinstance(data, dict):
+                    return self._send(400, {"error": "profile must be an object"})
+                return self._send(200, APPLY.set_profile(data))
+
+            if self.path == "/api/apply/prepare":
+                data = self._body()
+                run_id = (data.get("run_id") or "").strip()
+                run = RUNS.get(run_id) if run_id else None
+                text = (((run or {}).get("state") or {}).get("tailored_resume")
+                        or data.get("resume_text") or "").strip()
+                if not text:
+                    return self._send(400, {"error": "no tailored résumé found — run a tailoring first"})
+                job = data.get("job") or {}
+                url = (job.get("url") or "").strip()
+                ats = apply.detect_ats(url)
+                automatable, reason = apply.is_automatable(url)
+                app_id = uuid.uuid4().hex[:12]
+                resume_path = _save_resume(app_id, text)
+                note = apply.build_note(job.get("title"), job.get("company"), url, automatable, reason)
+                rec = APPLY.add_application({
+                    "id": app_id, "run_id": run_id, "job_title": job.get("title"),
+                    "company": job.get("company"), "url": url, "source": job.get("source"),
+                    "ats": ats, "resume_path": resume_path, "status": "prepared", "note": note})
+                return self._send(200, {"application": rec, "note": note, "link": url,
+                                        "automatable": automatable, "reason": reason})
+
+            if self.path == "/api/apply/plan":
+                data = self._body()
+                url = (data.get("url") or "").strip()
+                profile = {**APPLY.get_profile(), "resume_path": "(your tailored résumé)"}
+                ats = apply.detect_ats(url)
+                ok, reason = apply.is_automatable(url)
+                plan = apply.build_fill_plan(profile, ats)
+                return self._send(200, {"ats": ats, "automatable": ok, "reason": reason,
+                                        "fields": [{"label": f["label"], "value": f["value"],
+                                                    "type": f["type"]} for f in plan]})
+
+            if self.path == "/api/apply/fill":
+                data = self._body()
+                rec = APPLY.get_application((data.get("application_id") or "").strip())
+                if not rec:
+                    return self._send(404, {"error": "unknown application"})
+                url = rec.get("url") or ""
+                ok, reason = apply_autofill.preflight(url)
+                if not ok:
+                    # No Playwright, or a ban-risk board -> packet fallback, no browser.
+                    return self._send(200, {"launched": False, "reason": reason,
+                                            "note": rec.get("note"), "link": url})
+                profile = {**APPLY.get_profile(), "resume_path": rec.get("resume_path")}
+                subprocess.Popen(
+                    [sys.executable, str(Path(__file__).with_name("apply_autofill.py")),
+                     url, json.dumps(profile)],
+                    cwd=str(Path(__file__).parent))
+                APPLY.set_status(rec["id"], "filling")
+                return self._send(200, {"launched": True, "link": url,
+                                        "note": "Browser opening on your desktop — the form will be "
+                                                "filled and paused at Submit. Review and submit it yourself."})
+
+            if self.path == "/api/apply/status":
+                data = self._body()
+                rec = APPLY.get_application((data.get("application_id") or "").strip())
+                if not rec:
+                    return self._send(404, {"error": "unknown application"})
+                return self._send(200, APPLY.set_status(rec["id"], (data.get("status") or "prepared").strip()))
 
             parts = self.path.strip("/").split("/")  # api / runs / {id} / {action}
             if len(parts) == 4 and parts[:2] == ["api", "runs"]:

@@ -19,6 +19,7 @@ Run (CLI):  OPENAI_API_KEY=... FIRECRAWL_API_KEY=... python career_agent.py
 """
 
 import os
+import re
 import uuid
 from typing import Dict, Any, List, TypedDict
 
@@ -46,7 +47,6 @@ try:
 except Exception:  # pragma: no cover
     Firecrawl = None
 
-from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -71,10 +71,11 @@ OPENAI_COMPAT = {
 _provider = os.getenv("LLM_PROVIDER", "groq").lower()
 LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
 
-# NOTE: validate_payload_node uses the DEFAULT with_structured_output()
-# (tool-calling), which is the reliable structured-output seam on every backend
-# here (Claude tool-use, Groq 70B, Ollama). Do NOT switch it to
-# method="json_schema"/strict on Groq gpt-oss — that path is broken (LangChain #34155).
+# NOTE: validate_payload_node uses a PLAIN-TEXT verdict (_llm_verdict), not
+# tool-calling / structured output. Free models (e.g. gpt-oss-120b on OpenRouter)
+# emit malformed tool calls that crash a strict JSON/Pydantic parser mid-invoke,
+# before include_raw can catch them. A 'VERDICT: PASS|FAIL' line that we parse
+# leniently and fail-closed on works on every backend (Claude, Groq, gpt-oss, Ollama).
 
 
 def _build_llm():
@@ -154,6 +155,70 @@ def sanitize_input_node(state: ApplicationState) -> Dict[str, Any]:
     }
 
 
+def _llm_error(exc):
+    """Pull the provider's human-readable message out of an SDK exception
+    (e.g. 'Your credit balance is too low…') instead of the raw 400 blob."""
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        msg = (body.get("error") or {}).get("message")
+        if msg:
+            return msg
+    return str(exc)
+
+
+def _content_to_text(content):
+    """Coerce a chat model's .content to a string — some providers/configs return
+    a list of content blocks rather than a plain string."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for b in content:
+            if isinstance(b, str):
+                parts.append(b)
+            elif isinstance(b, dict):
+                parts.append(b.get("text") or b.get("content") or "")
+            else:
+                parts.append(getattr(b, "text", "") or "")
+        return "".join(parts)
+    return str(content or "")
+
+
+def _llm_verdict(master, tailored, determ_flags):
+    """Ask the model to fact-check the tailored resume and return (passed, reasoning).
+
+    Uses a PLAIN-TEXT verdict (not tool-calling / structured output): free models
+    emit malformed tool calls that crash a strict JSON parser, but every model can
+    follow 'reply VERDICT: PASS|FAIL'. Parses leniently and FAILS CLOSED on any
+    ambiguity or provider error — never silently auto-passes."""
+    prompt = (
+        "You are a strict resume fact-checker. Compare the TAILORED resume against "
+        "the MASTER. FAIL if the tailored version introduces ANY employer, title, "
+        "date, degree, certification, environment descriptor (e.g. '24x7'), or "
+        "quantified metric not present or directly supported in the master. "
+        "Rewording is fine; new facts are not.\n\n"
+        "Reply on the FIRST line with exactly 'VERDICT: PASS' or 'VERDICT: FAIL', "
+        "then 1-2 sentences naming any fabricated fact (or confirming none).\n\n"
+        f"=== MASTER RESUME ===\n{master}\n\n"
+        f"=== TAILORED RESUME ===\n{tailored}\n\n"
+        f"=== PRE-SCAN: numbers in tailored but not master ===\n{determ_flags or 'none'}"
+    )
+    try:
+        text = _content_to_text(LLM.invoke(prompt).content).strip()
+    except Exception as exc:
+        return False, f"Validator call failed ({_llm_error(exc)}); failing closed for safety."
+    m = re.search(r"VERDICT:?\s*\**\s*(PASS|FAIL)", text, re.I)
+    if m:
+        return m.group(1).upper() == "PASS", text
+    # No explicit verdict token — infer cautiously, else fail closed.
+    low = text.lower()
+    if "fail" in low and "pass" not in low:
+        return False, text
+    if "pass" in low and "fail" not in low and "fabricat" not in low:
+        return True, text
+    return False, f"Validator response was ambiguous; failing closed for safety. Raw: {text[:300]}"
+
+
 def tailor_materials_node(state: ApplicationState) -> Dict[str, Any]:
     attempt = state.get("retry_count", 0)
 
@@ -172,7 +237,12 @@ def tailor_materials_node(state: ApplicationState) -> Dict[str, Any]:
         prompt = core.tailoring_prompt(
             state["safe_job_spec"], state["master_resume"], feedback
         )
-        tailored = LLM.invoke(prompt).content
+        try:
+            tailored = _content_to_text(LLM.invoke(prompt).content)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Tailoring failed via {ACTIVE_PROVIDER}/{ACTIVE_MODEL} — {_llm_error(exc)}"
+            )
 
     return {"tailored_resume": tailored, "retry_count": attempt + 1}
 
@@ -196,38 +266,9 @@ def validate_payload_node(state: ApplicationState) -> Dict[str, Any]:
             if passed else "Tailored resume introduced numbers absent from the master."
         )
     else:
-        class VerificationSchema(BaseModel):
-            passed: bool = Field(
-                description="True ONLY if the tailored resume invents no fact absent from the master."
-            )
-            reasoning: str = Field(
-                description="Name any fabricated employer, title, date, degree, or metric — or confirm none."
-            )
-
-        # include_raw=True so a malformed/empty tool call surfaces as
-        # parsing_error / parsed=None instead of crashing on result.passed.
-        structured_llm = LLM.with_structured_output(VerificationSchema, include_raw=True)
-        audit_prompt = (
-            "Compare the TAILORED resume against the MASTER resume. FAIL if the "
-            "tailored version introduces ANY employer, title, date, degree, "
-            "certification, or quantified metric not present or directly "
-            "supported in the master. Rewording is fine; new facts are not.\n\n"
-            f"=== MASTER RESUME ===\n{master}\n\n"
-            f"=== TAILORED RESUME ===\n{tailored}\n\n"
-            f"=== PRE-SCAN: numbers in tailored but not master ===\n"
-            f"{determ_flags or 'none'}"
-        )
-        result = structured_llm.invoke(audit_prompt)
-        parsed = result.get("parsed") if isinstance(result, dict) else result
-        parse_err = result.get("parsing_error") if isinstance(result, dict) else None
-        if parsed is None or parse_err is not None:
-            # Fail CLOSED — never auto-pass when the validator's own response is
-            # unparseable. The deterministic flags still inform the human.
-            note = "Validator response could not be parsed; failing closed for safety."
-            if determ_flags:
-                note = f"[guard] new numbers not in master: {determ_flags}. {note}"
-            return {"validation_status": "FAILED", "audit_notes": note}
-        passed, reasoning = parsed.passed, parsed.reasoning
+        # Plain-text verdict + lenient parse. Robust to free models that emit
+        # malformed tool calls (which crashed the old structured-output path).
+        passed, reasoning = _llm_verdict(master, tailored, determ_flags)
 
     # Deterministic guard is AUTHORITATIVE on both the LLM and MOCK paths: a
     # tailored resume that introduces numbers absent from the master FAILS even

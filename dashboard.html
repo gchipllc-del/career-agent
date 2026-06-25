@@ -268,6 +268,36 @@
         <button class="bad" id="rejectBtn" onclick="decide('reject')">Reject</button>
       </div>
     </div>
+
+    <div class="card" id="applyCard">
+      <h2>Apply · auto-fill, you submit</h2>
+      <p class="muted" style="font-family:var(--mono);font-size:11px;color:var(--dim);margin:0 0 11px">
+        Fills the form from your profile + tailored résumé, then <b>pauses at Submit</b> — never auto-submits.
+        <span id="pwHint"></span></p>
+
+      <details>
+        <summary style="cursor:pointer;color:var(--mut);font-size:13px;margin-bottom:8px">▾ Your profile · filled into every form</summary>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <input id="pf_full_name" placeholder="Full name" />
+          <input id="pf_email" placeholder="Email" />
+          <input id="pf_phone" placeholder="Phone" />
+          <input id="pf_location" placeholder="Location · City, ST" />
+          <input id="pf_linkedin" placeholder="LinkedIn URL" />
+          <input id="pf_github" placeholder="GitHub / portfolio URL" />
+        </div>
+        <button class="chip" onclick="saveProfile()" style="margin-top:8px">Save profile</button>
+      </details>
+
+      <label style="margin-top:13px">Prepare an application · uses your last tailored résumé</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <input id="ap_title" placeholder="Job title" />
+        <input id="ap_company" placeholder="Company" />
+      </div>
+      <input id="ap_url" placeholder="Apply URL · https://boards.greenhouse.io/…" style="margin-top:8px" />
+      <button class="primary" onclick="prepareApply()" style="margin-top:9px">Prepare to apply</button>
+
+      <div id="applyList"></div>
+    </div>
   </section>
 </div>
 
@@ -338,14 +368,56 @@ function setStep(k, cls){ const el=document.querySelector(`.step[data-k="${k}"]`
 function resetSteps(){ ['scrape','sanitize','tailor','validate','gate'].forEach(k=>setStep(k,'')); }
 
 async function api(path, opts){ const r=await fetch(path,opts); const j=await r.json(); if(!r.ok) throw new Error(j.error||r.status); return j; }
+const apiPost=(path,obj)=>api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj||{})});
 
 (async function health(){
   try{ const h=await api('/api/health');
     const tail = h.provider ? ` · ${h.provider}${h.model?(' '+h.model):''}` : (h.mock_mode?' · mock':'');
     $('#engineBadge').innerHTML = `engine: <b>${h.engine}</b>${tail}`;
     $('#engineBadge').classList.add('online');
+    const pw=$('#pwHint'); if(pw) pw.innerHTML = h.autofill
+      ? '<span class="pill ok" style="font-size:10px">browser autofill ready</span>'
+      : '<span class="pill mut" style="font-size:10px">install Playwright to enable browser autofill</span>';
+    loadProfile(); loadApplications();
   }catch(e){ OFFLINE=true; $('#engineBadge').innerHTML='engine: <b>browser</b> · offline'; }
 })();
+
+// ---- assisted apply ----
+let APPS=[];
+const PF_KEYS=['full_name','email','phone','location','linkedin','github'];
+async function loadProfile(){ try{ const p=await api('/api/profile'); PF_KEYS.forEach(k=>{ const el=$('#pf_'+k); if(el&&p[k]) el.value=p[k]; }); }catch(e){} }
+async function saveProfile(){ const b={}; PF_KEYS.forEach(k=>{ const el=$('#pf_'+k); if(el) b[k]=el.value.trim(); }); try{ await apiPost('/api/profile',b); toast('Profile saved'); }catch(e){ toast('Save failed: '+e.message); } }
+async function prepareApply(){
+  const text=(RUN&&RUN.state&&RUN.state.tailored_resume)||'';
+  if(!text){ toast('Run a tailoring first — no résumé to attach'); return; }
+  const job={title:$('#ap_title').value.trim(),company:$('#ap_company').value.trim(),url:$('#ap_url').value.trim(),source:'manual'};
+  if(!job.url){ toast('Add the apply URL'); return; }
+  try{ await apiPost('/api/apply/prepare',{run_id:RUN.run_id,resume_text:text,job}); toast('Application prepared'); $('#ap_title').value='';$('#ap_company').value='';$('#ap_url').value=''; await loadApplications(); }
+  catch(e){ toast('Prepare failed: '+e.message); }
+}
+async function loadApplications(){ try{ APPS=(await api('/api/applications')).applications||[]; renderApplications(); }catch(e){} }
+function renderApplications(){
+  const box=$('#applyList'); if(!box) return;
+  if(!APPS.length){ box.innerHTML=''; return; }
+  box.innerHTML='<label style="margin-top:14px">Tracker</label>'+APPS.map(a=>{
+    const auto=a.url && !/linkedin|indeed|glassdoor|ziprecruiter|monster|dice/i.test(a.url);
+    return `<div class="match">
+      <div class="mhead"><b>${esc(a.job_title||'role')}</b> · ${esc(a.company||'')} <span class="pill ${a.status==='submitted'?'ok':'mut'}">${esc(a.status)}</span></div>
+      <div class="muted" style="font-size:11px;margin:5px 0">${esc(a.ats||'')}${a.url?` · <a href="${esc(a.url)}" target="_blank" rel="noopener">apply link ↗</a>`:''}</div>
+      <div class="row">
+        <button class="chip" onclick="fillApply('${a.id}')">${auto?'▸ Auto-fill in browser':'▸ Get packet + link'}</button>
+        <button class="chip" onclick="markStatus('${a.id}','submitted')">✓ Mark submitted</button>
+      </div></div>`;
+  }).join('');
+}
+async function fillApply(id){
+  try{ const r=await apiPost('/api/apply/fill',{application_id:id});
+    if(r.launched){ toast('Browser opening — review & submit there'); }
+    else{ toast('See the note below'); $('#outBody').innerHTML=`<div class="empty" style="white-space:normal;text-align:left">${esc(r.note||r.reason||'')}${r.link?`<br><br><a href="${esc(r.link)}" target="_blank" rel="noopener">${esc(r.link)} ↗</a>`:''}</div>`; }
+    await loadApplications();
+  }catch(e){ toast('Fill failed: '+e.message); }
+}
+async function markStatus(id,status){ try{ await apiPost('/api/apply/status',{application_id:id,status}); await loadApplications(); }catch(e){} }
 
 const STAGE_ORDER=['scrape','sanitize','tailor','validate','gate'];
 
@@ -374,15 +446,18 @@ async function run(){
 
   const markDone=s=>{ setStep(s,'done'); const n=STAGE_ORDER[STAGE_ORDER.indexOf(s)+1]; if(n && n!=='gate') setStep(n,'active'); };
   setStep('scrape','active');
-  let finished=false;
+  let finished=false, curStage='scrape';  // track the in-progress stage so errors blame the RIGHT step
   const es=new EventSource(`/api/runs/${started.run_id}/events`);
   es.onmessage=ev=>{
     const m=JSON.parse(ev.data);
-    if(m.event==='stage'){ m.status==='active' ? setStep(m.stage,'active') : markDone(m.stage); }
+    if(m.event==='stage'){ if(m.status==='active'){ curStage=m.stage; setStep(m.stage,'active'); } else { markDone(m.stage); const n=STAGE_ORDER[STAGE_ORDER.indexOf(m.stage)+1]; if(n) curStage=n; } }
     else if(m.event==='done'){ finished=true; es.close(); RUN={run_id:m.run_id, status:m.status, state:m.state}; render(m.state, m.status); finish(); }
-    else if(m.event==='error'){ finished=true; es.close(); toast('Error: '+m.message); setStep('tailor','bad'); finish(); }
+    else if(m.event==='error'){ finished=true; es.close();
+      $('#gateCard').style.display='none';
+      $('#outBody').innerHTML=`<div class="empty" style="color:var(--bad);white-space:normal;text-align:left">⚠ ${esc(m.message)}</div>`;
+      toast(`Pipeline error at "${curStage}" — details below`); setStep(curStage,'bad'); finish(); }
   };
-  es.onerror=()=>{ if(finished) return; finished=true; es.close(); toast('Connection lost'); setStep('tailor','bad'); finish(); };
+  es.onerror=()=>{ if(finished) return; finished=true; es.close(); toast('Connection lost'); setStep(curStage,'bad'); finish(); };
 }
 
 function render(s, status){

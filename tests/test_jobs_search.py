@@ -19,6 +19,11 @@ class _Patch(unittest.TestCase):
         js._get = lambda url, *a, **k: payload
         self.addCleanup(lambda: setattr(js, "_get", orig))
 
+    def patch_post(self, payload):
+        orig = js._post
+        js._post = lambda url, body, *a, **k: payload
+        self.addCleanup(lambda: setattr(js, "_post", orig))
+
 
 class TestNormalizers(_Patch):
     def test_himalayas(self):
@@ -147,6 +152,42 @@ class TestNormalizers(_Patch):
         os.environ.pop("USAJOBS_EMAIL", None)
         self.assertEqual(js.usajobs("x"), [])
 
+    def test_jooble_normalizes(self):
+        os.environ["JOOBLE_API_KEY"] = "k"
+        self.addCleanup(os.environ.pop, "JOOBLE_API_KEY", None)
+        self.patch_post({"jobs": [{
+            "id": "jb1", "title": "SOC Analyst (2nd Shift)", "company": "Acme",
+            "location": "Dallas, TX", "type": "Full-time", "link": "https://jooble.org/jdp/1",
+            "snippet": "Evening shift SIEM monitoring", "source": "indeed.com", "updated": "2026-06-01"}]})
+        r = js.jooble("soc")[0]
+        self.assertEqual(r["source"], "Jooble")
+        self.assertEqual(r["title"], "SOC Analyst (2nd Shift)")
+        self.assertEqual(r["company"], "Acme")
+        self.assertEqual(r["location"], "Dallas, TX")
+        self.assertEqual(r["employment_type"], "Full-time")
+        self.assertIn("indeed", r["attribution"]["name"])
+
+    def test_jooble_self_skips_without_key(self):
+        os.environ.pop("JOOBLE_API_KEY", None)
+        self.assertEqual(js.jooble("x"), [])
+
+    def test_careerjet_normalizes(self):
+        os.environ["CAREERJET_AFFID"] = "aff"
+        self.addCleanup(os.environ.pop, "CAREERJET_AFFID", None)
+        self.patch_get({"jobs": [{
+            "title": "Security Analyst - Evening Shift", "company": "Globex",
+            "locations": "Austin, TX", "url": "https://www.careerjet.com/job/1",
+            "description": "SOC operations, swing shift", "date": "2026-06-02"}]})
+        r = js.careerjet("security")[0]
+        self.assertEqual(r["source"], "Careerjet")
+        self.assertEqual(r["title"], "Security Analyst - Evening Shift")
+        self.assertEqual(r["location"], "Austin, TX")
+        self.assertEqual(r["url"], "https://www.careerjet.com/job/1")
+
+    def test_careerjet_self_skips_without_key(self):
+        os.environ.pop("CAREERJET_AFFID", None)
+        self.assertEqual(js.careerjet("x"), [])
+
 
 def _rec(title, company="Acme", desc=""):
     return {"title": title, "company": company, "description": desc, "url": "u"}
@@ -198,6 +239,20 @@ class TestExpandAndGate(unittest.TestCase):
         self.assertIn("soc", terms)
         self.assertIn("security", terms)
         self.assertIn("cybersecurity", terms)
+
+    def test_expand_query_cyber_and_shift(self):
+        terms = js.expand_query("cybersecurity analyst 2nd shift")
+        self.assertIn("2nd", terms)        # digit-leading token preserved
+        self.assertIn("evening", terms)    # 2nd -> second/evening/swing
+        self.assertIn("swing", terms)
+        self.assertIn("security", terms)   # cybersecurity -> security/soc
+        self.assertIn("soc", terms)
+
+    def test_toks_drops_bare_numbers_keeps_2nd(self):
+        t = js._toks("2nd shift 2024 soc")
+        self.assertIn("2nd", t)
+        self.assertIn("shift", t)
+        self.assertNotIn("2024", t)        # bare number dropped
 
     def test_gate_filters_generic_analysts(self):
         terms = js.expand_query("soc analyst")

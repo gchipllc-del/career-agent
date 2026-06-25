@@ -5,6 +5,9 @@
 *.sqlite
 *.sqlite-journal
 
+# Assisted-apply: saved tailored résumés (contain personal data)
+applications/
+
 # Python
 __pycache__/
 *.pyc

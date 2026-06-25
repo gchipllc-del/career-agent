@@ -33,6 +33,15 @@ def _get(url, headers=None):
         return json.loads(r.read().decode("utf-8", "replace"))
 
 
+def _post(url, body, headers=None):
+    h = {"User-Agent": UA, "Content-Type": "application/json"}
+    if headers:
+        h.update(headers)
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=h, method="POST")
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
 def _text(s):
     """HTML -> plain-ish text (entities unescaped, tags stripped)."""
     return _TAG.sub(" ", html.unescape(s or "")).strip()
@@ -236,10 +245,57 @@ def usajobs(query):
     return out
 
 
+def jooble(query):
+    """Jooble aggregator — broad coverage incl. on-site and shift-based roles
+    (SOC, manufacturing, healthcare). Free key, POST/JSON. Self-skips without
+    JOOBLE_API_KEY. Key at jooble.org/api/about."""
+    key = os.getenv("JOOBLE_API_KEY")
+    if not key:
+        return []
+    body = {"keywords": query}
+    loc = os.getenv("JOB_LOCATION")
+    if loc:
+        body["location"] = loc
+    d = _post(f"https://jooble.org/api/{key}", body)
+    out = []
+    for j in d.get("jobs", []):
+        loc = j.get("location") or ""
+        out.append(_rec(
+            "Jooble", j.get("id"), j.get("title"), j.get("company"),
+            loc, j.get("type"),
+            "remote" in (loc + " " + (j.get("title") or "")).lower(),
+            j.get("link"), j.get("snippet"), j.get("updated"),
+            {"name": f"Jooble · {j.get('source') or 'aggregator'}", "link": j.get("link") or "https://jooble.org"}))
+    return out
+
+
+def careerjet(query):
+    """Careerjet aggregator — broad on-site coverage. Free affiliate API.
+    Self-skips without CAREERJET_AFFID. Key at careerjet.com/partners."""
+    affid = os.getenv("CAREERJET_AFFID")
+    if not affid:
+        return []
+    loc = os.getenv("JOB_LOCATION", "")
+    url = ("https://public.api.careerjet.net/search"
+           f"?keywords={urllib.parse.quote(query)}&location={urllib.parse.quote(loc)}"
+           f"&affid={affid}&user_ip=127.0.0.1&user_agent={urllib.parse.quote(UA)}"
+           "&pagesize=50&sort=relevance&contenttype=application/json")
+    d = _get(url)
+    out = []
+    for j in d.get("jobs", []):
+        locs = j.get("locations") or ""
+        out.append(_rec(
+            "Careerjet", j.get("url"), j.get("title"), j.get("company"),
+            locs, "", "remote" in (locs + " " + (j.get("title") or "")).lower(),
+            j.get("url"), j.get("description"), j.get("date"),
+            {"name": "Careerjet", "link": j.get("url") or "https://www.careerjet.com"}))
+    return out
+
+
 # Feed adapters return a general (query-independent) feed → cache once, share
 # across queries. Keyword adapters do real server-side search → cache per query.
 FEED_ADAPTERS = [himalayas, remotive, remoteok, company_boards]
-KEYWORD_ADAPTERS = [adzuna, jsearch, reed, usajobs]
+KEYWORD_ADAPTERS = [adzuna, jsearch, reed, usajobs, jooble, careerjet]
 ADAPTERS = FEED_ADAPTERS + KEYWORD_ADAPTERS
 
 
@@ -280,7 +336,7 @@ def search_all(query, adapters=None):
 
 # --- ranking (stdlib TF-IDF cosine; injection-immune bag-of-words) -----------
 
-_WORD = re.compile(r"[a-z0-9+#.]+")
+_WORD = re.compile(r"[a-z0-9][a-z0-9+#.\-]*")  # keeps 2nd/3rd/401k/c++/node.js
 _STOP = set((
     "a an the and or of to in for with on at is are be as by from this that we you your our "
     "role job work works working experience year years team teams will who what when where "
@@ -301,6 +357,18 @@ ACRONYMS = {
     "pm": ["product manager", "project manager"], "ba": ["business analyst"],
     "ux": ["user experience", "product design"], "fe": ["frontend"], "be": ["backend"],
     "fullstack": ["full stack"], "swe": ["software engineer"],
+    # security
+    "cyber": ["cybersecurity", "security", "infosec", "soc"],
+    "cybersecurity": ["security", "soc", "infosec", "threat", "information"],
+    # shift / schedule facets (so "2nd shift" matches second/evening/swing roles)
+    "shift": ["schedule", "hours"],
+    "2nd": ["second", "evening", "swing", "afternoon"],
+    "second": ["evening", "swing", "afternoon"],
+    "3rd": ["third", "night", "overnight", "graveyard"],
+    "third": ["night", "overnight", "graveyard"],
+    "1st": ["first", "day", "morning"],
+    "swing": ["evening", "afternoon"],
+    "overnight": ["night", "graveyard"],
 }
 
 
@@ -315,7 +383,12 @@ _ROLE_WORDS = set((
 
 
 def _toks(s):
-    return [w for w in _WORD.findall((s or "").lower()) if w not in _STOP and len(w) > 1]
+    out = []
+    for w in _WORD.findall((s or "").lower()):
+        w = w.strip(".-#")
+        if len(w) > 1 and w not in _STOP and any(c.isalpha() for c in w):
+            out.append(w)  # any(isalpha) drops bare numbers like "2024" but keeps "2nd"
+    return out
 
 
 def expand_query(query, llm=None):
