@@ -55,8 +55,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 # Pick a backend with LLM_PROVIDER. Three notable modes:
 #   • anthropic  -> Claude Opus (personal, highest quality, PAID). Uses the
 #                   native Anthropic client; needs ANTHROPIC_API_KEY.
-#   • ollama     -> a local model on THIS machine, NO API key. Install Ollama
-#                   and `ollama pull llama3.2`. Good for "anyone can run it."
+#   • ollama     -> a local model on THIS machine, NO ACCOUNT / NO API key.
+#                   Install Ollama + `ollama pull deepseek-r1:8b` (R1 reasoning
+#                   <think> traces are stripped in _content_to_text). Fully
+#                   offline & private — the "anyone can run it, no signup" path.
 #   • (no key)   -> zero-dependency MOCK mode that anyone can run with nothing.
 # Hosted OpenAI-compatible free tiers (groq/openrouter/cerebras) also supported.
 #   LLM_PROVIDER = anthropic | ollama | groq | openrouter | cerebras | openai
@@ -168,12 +170,24 @@ def _llm_error(exc):
     return str(exc)
 
 
+def _strip_reasoning(text):
+    """Reasoning models (e.g. DeepSeek-R1 distills run locally via Ollama) emit
+    their chain of thought wrapped in <think>...</think> before the real answer.
+    Strip it so the tailored résumé / verdict isn't polluted by the model
+    thinking out loud. No-op for models that don't emit it."""
+    if "</think>" in text:
+        text = re.sub(r"(?is)<think>.*?</think>", "", text)
+        if "</think>" in text:  # truncated/unmatched closing tag -> keep what follows
+            text = text.rsplit("</think>", 1)[-1]
+    return text.strip()
+
+
 def _content_to_text(content):
-    """Coerce a chat model's .content to a string — some providers/configs return
-    a list of content blocks rather than a plain string."""
+    """Coerce a chat model's .content to a CLEAN string: handles list-of-blocks
+    output (some providers) AND strips reasoning-model <think> traces."""
     if isinstance(content, str):
-        return content
-    if isinstance(content, list):
+        s = content
+    elif isinstance(content, list):
         parts = []
         for b in content:
             if isinstance(b, str):
@@ -182,8 +196,10 @@ def _content_to_text(content):
                 parts.append(b.get("text") or b.get("content") or "")
             else:
                 parts.append(getattr(b, "text", "") or "")
-        return "".join(parts)
-    return str(content or "")
+        s = "".join(parts)
+    else:
+        s = str(content or "")
+    return _strip_reasoning(s)
 
 
 def _llm_verdict(master, tailored, determ_flags):
