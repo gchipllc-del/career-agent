@@ -39,4 +39,4 @@ Repository = "https://github.com/gchipllc-del/career-agent"
 
 # Flat layout: list our modules explicitly so packaging never scans sibling files.
 [tool.setuptools]
-py-modules = ["core", "career_agent", "server", "jobs_search", "resume_io", "localenv", "apply", "apply_autofill"]
+py-modules = ["core", "career_agent", "server", "jobs_search", "resume_io", "localenv", "apply", "apply_autofill", "ats"]

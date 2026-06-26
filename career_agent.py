@@ -27,6 +27,7 @@ import localenv
 localenv.load()  # apply a personal .env before provider settings are read
 
 import core
+import ats
 
 # Heavy, optional deps — guarded so the module imports even when they're absent
 # (the server then falls back to core.run_pipeline).
@@ -122,6 +123,7 @@ class ApplicationState(TypedDict):
     validation_status: str
     audit_notes: str
     coverage: Dict[str, Any]    # JD keyword gap analysis (advisory)
+    ats: Dict[str, Any]         # ATS score + gaps (hard gate via the retry loop)
     retry_count: int
 
 
@@ -279,10 +281,24 @@ def validate_payload_node(state: ApplicationState) -> Dict[str, Any]:
     if determ_flags:
         passed = False
         notes = f"[guard] new numbers not in master: {determ_flags}. {reasoning}"
+
+    # ATS gate: a truthful résumé must ALSO clear the ATS target. If it doesn't,
+    # fail so the retry loop re-tailors with the keyword gaps (truthfully — the
+    # fabrication guard above still blocks any invented skill). This is the
+    # "beat the ATS every time" engine: iterate until the score clears, or land
+    # in human review with the gap named when the master genuinely lacks it.
+    ats_result = ats.score(state.get("scraped_job_spec", ""), tailored)
+    # Gate only in real mode: mock_tailor is a no-backend demo that doesn't
+    # keyword-tailor, so gating it on ATS would never reach the approval gate.
+    if passed and not MOCK_MODE and not ats_result["passes"]:
+        passed = False
+        notes = f"{ats.feedback(ats_result)} (no fabrication detected — keep it truthful)"
+
     return {
         "validation_status": "PASSED" if passed else "FAILED",
         "audit_notes": notes,
         "coverage": core.jd_coverage(state.get("scraped_job_spec", ""), tailored),
+        "ats": ats_result,
     }
 
 
@@ -383,6 +399,7 @@ def run_to_gate_events(run_id: str, master_resume: str, job_text: str = "", job_
         "validation_status": "",
         "audit_notes": "",
         "coverage": {},
+        "ats": {},
         "retry_count": 0,
     }
     for chunk in app.stream(initial, config, stream_mode="updates"):

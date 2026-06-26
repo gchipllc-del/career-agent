@@ -139,6 +139,7 @@ def _public(state):
         "audit_notes": state.get("audit_notes", ""),
         "tailored_resume": state.get("tailored_resume", ""),
         "coverage": state.get("coverage") or {},
+        "ats": state.get("ats") or {},
         "retry_count": state.get("retry_count", 0),
         "job_chars": len((state.get("scraped_job_spec") or "")),
     }

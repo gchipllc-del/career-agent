@@ -484,8 +484,18 @@ function render(s, status){
         +`<p class="kv" style="color:var(--dim);font-size:11.5px">↑ JD keywords not in your résumé — add any you genuinely have.</p>`;
     }
   }
+  const a=s.ats||{}; let atshtml='';
+  if(typeof a.score==='number'){
+    const col=a.passes?'var(--ok)':'#fcd34d';
+    atshtml=`<p class="kv">ATS score: <b style="color:${col}">${a.score}%</b> <span style="color:var(--dim)">(target ${a.target}% ${a.passes?'✓ beats ATS':'· iterating'})</span></p>`;
+    if(a.missing_required&&a.missing_required.length){
+      atshtml+=`<div class="flags">`+a.missing_required.slice(0,12).map(k=>
+        `<span class="tag" style="background:rgba(248,113,113,.10);color:#fca5a5;border-color:rgba(248,113,113,.28)">${esc(k)}</span>`).join('')
+        +`</div><p class="kv" style="color:var(--dim);font-size:11.5px">↑ required JD keywords still missing — added only if your master supports them.</p>`;
+    }
+  }
   v.innerHTML = `${pill}
-     <p class="kv">Tailoring attempts: <b>${s.retry_count}</b> / 3</p>
+     <p class="kv">Tailoring attempts: <b>${s.retry_count}</b> / 3</p>${atshtml}
      <p class="kv">${esc(s.audit_notes||'')}</p>${covhtml}`;
   setStep('validate', st==='PASSED'?'done':'bad');
   // output (terminal-style panel + copy)
