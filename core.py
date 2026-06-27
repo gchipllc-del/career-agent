@@ -171,6 +171,51 @@ def jd_coverage(job_text, resume_text):
             "missing": sorted(jd - res)[:20]}
 
 
+# --- humanize: scrub the mechanical "an AI/word-processor wrote this" tells ---
+
+# Cosmetic-only character fixes. Never alters words or numbers, so it cannot
+# affect the fabrication / coverage / canary checks.
+_HUMANIZE_MAP = {}
+for _cp in (0x2010, 0x2011, 0x2012, 0x2013, 0x2015, 0x2212):  # hyphen/dash/minus variants -> "-"
+    _HUMANIZE_MAP[_cp] = "-"
+_HUMANIZE_MAP[0x2014] = " - "                                  # em dash -> spaced hyphen
+_HUMANIZE_MAP.update({0x2018: "'", 0x2019: "'", 0x201A: "'", 0x201B: "'",
+                      0x201C: '"', 0x201D: '"', 0x201E: '"'})  # smart quotes -> straight
+_HUMANIZE_MAP.update({0x00A0: " ", 0x2007: " ", 0x2008: " ", 0x2009: " ",
+                      0x2002: " ", 0x2003: " ", 0x202F: " "})  # fancy spaces -> normal space
+for _cp in (0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0x2060, 0xFEFF):  # zero-width -> delete
+    _HUMANIZE_MAP[_cp] = None
+_HUMANIZE_MAP[0x2026] = "..."                                  # ellipsis
+
+
+def humanize(text):
+    """Strip the mechanical fingerprints that scream 'generated': fancy unicode
+    dashes/quotes/spaces, zero-width chars, and the '30 %' spaced-percent tell.
+    Purely cosmetic — leaves every word and number intact."""
+    if not text:
+        return text
+    text = text.translate(_HUMANIZE_MAP)
+    text = re.sub(r"(\d)\s+%", r"\1%", text)      # "30 %" -> "30%"
+    text = re.sub(r"[ \t]{2,}", " ", text)         # collapse runs of spaces (em-dash spacing etc.)
+    text = re.sub(r"[ \t]+\n", "\n", text)         # drop trailing spaces
+    return text
+
+
+def strip_markdown(text):
+    """Flatten lightweight markdown to clean plain text so an exported résumé has
+    no literal ### / ** / divider artifacts. Keeps bullet lines."""
+    out = []
+    for line in (text or "").split("\n"):
+        s = line.rstrip()
+        if re.fullmatch(r"\s*[-*_]{3,}\s*", s):    # --- *** ___ divider -> drop
+            continue
+        s = re.sub(r"^\s*#{1,6}\s*", "", s)         # ### Header -> Header
+        s = re.sub(r"\*\*(.+?)\*\*", r"\1", s)      # **bold** -> bold
+        s = re.sub(r"`([^`]+)`", r"\1", s)          # `code` -> code
+        out.append(s)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+
 # --- mock LLM (used when no OPENAI_API_KEY) --------------------------------
 
 def mock_tailor(master_resume, feedback=""):

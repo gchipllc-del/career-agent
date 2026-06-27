@@ -507,7 +507,7 @@ function render(s, status){
            <button class="copy" onclick="exportResume('txt')">↓ .txt</button>
            <button class="copy" onclick="exportResume('docx')">↓ .docx</button>
          </span></div>
-         <pre class="out" id="outPre">${esc(s.tailored_resume)}</pre></div>`
+         <pre class="out" id="outPre">${esc(displayClean(s.tailored_resume))}</pre></div>`
     : `<div class="empty">No output.</div>`;
   // gate
   const gc=$('#gateCard'); gc.style.display='';
@@ -532,6 +532,21 @@ async function decide(action){
     if(res.status==='submitted'){ setStep('gate','done'); $('#gateMsg').innerHTML='<span class="pill ok">✓ submitted</span>'; toast('Application submitted'); }
     else { $('#gateMsg').innerHTML='<span class="pill mut">rejected by human</span>'; toast('Rejected'); }
   }catch(e){ toast('Error: '+e.message); $('#approveBtn').disabled=false; $('#rejectBtn').disabled=false; }
+}
+
+// Mirror core.humanize + strip_markdown so the preview/copy/.txt read human-made
+// (the .docx path sends RAW markdown to the server so it can render real bold).
+function displayClean(t){
+  t=(t||'')
+    .replace(/[\u2010\u2011\u2012\u2013\u2015\u2212]/g,'-').replace(/\u2014/g,' - ')
+    .replace(/[\u2018\u2019\u201A\u201B]/g,"'").replace(/[\u201C\u201D\u201E]/g,'"')
+    .replace(/[\u00A0\u2002\u2003\u2007\u2008\u2009\u202F]/g,' ')
+    .replace(/[\u200B-\u200F\u2060\uFEFF]/g,'').replace(/\u2026/g,'...')
+    .replace(/(\d)\s+%/g,'$1%').replace(/[ \t]{2,}/g,' ');
+  return t.split('\n')
+    .filter(l=>!/^\s*[-*_]{3,}\s*$/.test(l))
+    .map(l=>l.replace(/^\s*#{1,6}\s*/,'').replace(/\*\*(.+?)\*\*/g,'$1').replace(/`([^`]+)`/g,'$1'))
+    .join('\n').replace(/\n{3,}/g,'\n\n').trim();
 }
 
 function copyOut(btn){
@@ -573,7 +588,7 @@ function exportResume(fmt){
   if(fmt==='txt'){ downloadBlob(new Blob([t],{type:'text/plain'}),'tailored_resume.txt'); return; }
   if(OFFLINE){ toast('Start the server to export .docx (.txt works offline)'); return; }
   fetch('/api/export',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({text:t, format:'docx'})})
+    body:JSON.stringify({text:(RUN&&RUN.state&&RUN.state.tailored_resume)||t, format:'docx'})})
     .then(r=>{ if(!r.ok) throw new Error('export failed'); return r.blob(); })
     .then(b=>downloadBlob(b,'tailored_resume.docx'))
     .catch(e=>toast('Export failed: '+e.message));

@@ -262,7 +262,10 @@ def tailor_materials_node(state: ApplicationState) -> Dict[str, Any]:
                 f"Tailoring failed via {ACTIVE_PROVIDER}/{ACTIVE_MODEL} — {_llm_error(exc)}"
             )
 
-    return {"tailored_resume": tailored, "retry_count": attempt + 1}
+    # Scrub the mechanical AI/word-processor fingerprints (fancy dashes, spaced
+    # percents, zero-width chars) before anything sees the text. Cosmetic only —
+    # words and numbers are untouched, so validation/coverage are unaffected.
+    return {"tailored_resume": core.humanize(tailored), "retry_count": attempt + 1}
 
 
 def validate_payload_node(state: ApplicationState) -> Dict[str, Any]:

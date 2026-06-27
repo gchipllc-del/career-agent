@@ -13,6 +13,8 @@ import re
 import zipfile
 import xml.sax.saxutils as _sx
 
+import core  # humanize() + strip_markdown() — scrub AI tells on export
+
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8 MB
 
 
@@ -85,22 +87,46 @@ def _pdf_to_text(data):
 
 # --- export (text -> file) --------------------------------------------------
 
+def _md_inline(line):
+    """Split a line into (text, bold) runs, honoring **bold** spans."""
+    for part in re.split(r"(\*\*.+?\*\*)", line):
+        if not part:
+            continue
+        if part.startswith("**") and part.endswith("**") and len(part) >= 4:
+            yield part[2:-2], True
+        else:
+            yield part, False
+
+
 def to_txt(text):
-    return (text or "").encode("utf-8")
+    # Clean plain-text résumé: no AI unicode tells, no literal ### / ** markdown.
+    return core.strip_markdown(core.humanize(text or "")).encode("utf-8")
 
 
 def to_docx(text):
-    """Return .docx bytes for the given text (one paragraph per line)."""
+    """Return .docx bytes, rendering markdown (### headings, **bold**) as real
+    formatting and scrubbing AI unicode tells — so the file reads as human-made."""
+    text = core.humanize(text or "")
     try:
         import docx
         doc = docx.Document()
-        for line in (text or "").split("\n"):
-            doc.add_paragraph(line)
+        for raw in text.split("\n"):
+            line = raw.rstrip()
+            if re.fullmatch(r"\s*[-*_]{3,}\s*", line):       # --- divider -> skip
+                continue
+            m = re.match(r"^\s*(#{1,6})\s+(.*)$", line)
+            if m:                                            # ### Heading -> bold para
+                doc.add_paragraph().add_run(
+                    re.sub(r"\*\*(.+?)\*\*", r"\1", m.group(2))).bold = True
+                continue
+            p = doc.add_paragraph()
+            for chunk, bold in _md_inline(line):
+                p.add_run(chunk).bold = bold
         buf = io.BytesIO()
         doc.save(buf)
         return buf.getvalue()
     except ImportError:
-        return _minimal_docx(text)
+        return _minimal_docx(core.strip_markdown(text))
 
 
 def _minimal_docx(text):

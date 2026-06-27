@@ -14,6 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import resume_io as rio  # noqa: E402
 
 SRC = "Jane Doe — Engineer\nAcme 2019-2024: cut latency 40%.\nB.S. CS 2019."
+# Export now humanizes AI/word-processor tells: the em dash becomes " - ".
+CLEAN = "Jane Doe - Engineer\nAcme 2019-2024: cut latency 40%.\nB.S. CS 2019."
 BOM = chr(0xFEFF)  # explicit codepoint (ASCII-clean source)
 
 
@@ -34,7 +36,7 @@ class TestImport(unittest.TestCase):
     def test_docx_roundtrip(self):
         blob = rio.to_docx(SRC)
         self.assertEqual(blob[:2], b"PK")  # it's a zip
-        self.assertEqual(rio.parse_resume("x.docx", blob).strip(), SRC.strip())
+        self.assertEqual(rio.parse_resume("x.docx", blob).strip(), CLEAN.strip())
 
     def test_minimal_stdlib_docx_roundtrip(self):
         blob = rio._minimal_docx(SRC)
@@ -47,7 +49,7 @@ class TestImport(unittest.TestCase):
 
 class TestExport(unittest.TestCase):
     def test_txt_bytes(self):
-        self.assertEqual(rio.to_txt(SRC), SRC.encode())
+        self.assertEqual(rio.to_txt(SRC), CLEAN.encode())
 
     def test_docx_is_zip(self):
         self.assertEqual(rio.to_docx(SRC)[:2], b"PK")
