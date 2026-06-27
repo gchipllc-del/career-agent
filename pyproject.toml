@@ -27,11 +27,13 @@ durable = ["langgraph-checkpoint-sqlite>=2"]
 resume = ["pypdf>=4", "python-docx>=1"]
 # Assisted-apply: local browser autofill (fills the form, pauses at Submit)
 apply = ["playwright>=1.40"]
+# Desktop app: native window launcher (python app.py). Falls back to the browser.
+desktop = ["pywebview>=5"]
 # Everything
 all = [
     "langgraph>=0.2", "langchain-openai>=0.1", "langchain-anthropic>=0.2",
     "langgraph-checkpoint-sqlite>=2", "pydantic>=2", "pypdf>=4", "python-docx>=1",
-    "playwright>=1.40",
+    "playwright>=1.40", "pywebview>=5",
 ]
 
 [project.urls]
@@ -39,4 +41,4 @@ Repository = "https://github.com/gchipllc-del/career-agent"
 
 # Flat layout: list our modules explicitly so packaging never scans sibling files.
 [tool.setuptools]
-py-modules = ["core", "career_agent", "server", "jobs_search", "resume_io", "localenv", "apply", "apply_autofill", "ats"]
+py-modules = ["core", "career_agent", "server", "jobs_search", "resume_io", "localenv", "apply", "apply_autofill", "ats", "app"]
