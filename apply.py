@@ -86,48 +86,58 @@ def build_fill_plan(profile, ats):
     # (2026); aria-label fallbacks catch modern React ATS. Combining them into one
     # list is safe — a selector that doesn't exist on a given ATS simply doesn't
     # match and the driver falls through. {ats: [...]} holds truly ATS-unique cases.
-    # (key, label, value, type, selectors, {ats: [extra_prepended]})
+    # (key, label, value, type, selectors, {ats: [extra_prepended]}, label_match)
+    # label_match: regex (as string) matched against <label for=...> text at runtime —
+    # the only way to hit per-job custom questions whose input ids are random
+    # (e.g. Greenhouse question_11163025008 for "LinkedIn Profile").
     rows = [
         ("first_name", "First name", first, "text",
          ['#first_name', 'input[autocomplete="given-name"]', 'input[name*="first" i]',
-          'input[id*="first" i]', 'input[aria-label*="first name" i]'],
-         {}),
+          'input[id*="first" i]', 'input[aria-label*="first name" i]',
+          'input[name="job_application[first_name]"]'],
+         {}, r"first\s*name"),
         ("last_name", "Last name", last, "text",
          ['#last_name', 'input[autocomplete="family-name"]', 'input[name*="last" i]',
-          'input[id*="last" i]', 'input[aria-label*="last name" i]'],
-         {}),
+          'input[id*="last" i]', 'input[aria-label*="last name" i]',
+          'input[name="job_application[last_name]"]'],
+         {}, r"last\s*name"),
         ("full_name", "Full name", full, "text",
-         ['input[name="name"]', 'input[aria-label*="full name" i]', 'input[id="name" i]'],
-         {"ashby": ['input[name="_systemfield_name"]']}),
+         ['input[name="name"]', 'input[data-qa="name-input"]',
+          'input[aria-label*="full name" i]', 'input[id="name" i]'],
+         {"ashby": ['input[name="_systemfield_name"]']}, None),
         ("email", "Email", profile.get("email", ""), "text",
          ['#email', 'input[type="email"]', 'input[autocomplete="email"]',
-          'input[name*="email" i]', 'input[id*="email" i]', 'input[aria-label*="email" i]'],
-         {"ashby": ['input[name="_systemfield_email"]']}),
+          'input[name*="email" i]', 'input[id*="email" i]', 'input[aria-label*="email" i]',
+          'input[name="job_application[email]"]'],
+         {"ashby": ['input[name="_systemfield_email"]']}, None),
         ("phone", "Phone", profile.get("phone", ""), "text",
          ['#phone', 'input[type="tel"]', 'input[name*="phone" i]',
-          'input[id*="phone" i]', 'input[aria-label*="phone" i]'],
-         {}),
+          'input[id*="phone" i]', 'input[aria-label*="phone" i]',
+          'input[name="job_application[phone]"]'],
+         {}, None),
         ("location", "Location", profile.get("location", ""), "text",
          ['#candidate-location', '#location-input', 'input[name="location"]',
           'input[name*="location" i]', 'input[id*="location" i]', 'input[aria-label*="location" i]'],
-         {}),
+         {}, r"location|city"),
         ("linkedin", "LinkedIn", profile.get("linkedin", ""), "text",
          ['input[name="urls[LinkedIn]"]', 'input[name*="linkedin" i]', 'input[aria-label*="linkedin" i]'],
-         {}),
+         {}, r"linkedin"),
         ("portfolio", "GitHub / portfolio", profile.get("github", "") or profile.get("portfolio", ""), "text",
          ['input[name="urls[GitHub]"]', 'input[name="urls[Portfolio]"]', 'input[name*="github" i]',
           'input[name*="portfolio" i]', 'input[name*="website" i]', 'input[aria-label*="portfolio" i]'],
-         {}),
+         {}, r"github|portfolio|website|personal\s*site"),
         ("resume", "Résumé upload", profile.get("resume_path", ""), "upload",
-         ['#resume', 'input[name="resume"]', 'input[type="file"]'],
-         {"ashby": ['#_systemfield_resume', 'input[type="file"]']}),
+         ['#resume', 'input[name="resume"]', 'input[name="job_application[resume]"]',
+          'input[type="file"]'],
+         {"ashby": ['#_systemfield_resume', 'input[type="file"]']}, None),
     ]
     plan = []
-    for key, label, value, typ, generic, extra in rows:
+    for key, label, value, typ, generic, extra, label_match in rows:
         if not value:
             continue
         plan.append({"key": key, "label": label, "value": value, "type": typ,
-                     "selectors": list(extra.get(ats, [])) + generic})
+                     "selectors": list(extra.get(ats, [])) + generic,
+                     "label_match": label_match})
     return plan
 
 

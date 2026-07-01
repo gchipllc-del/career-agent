@@ -14,6 +14,7 @@ Import is guarded so the rest of the app runs with nothing installed.
 """
 
 import json
+import re
 import sys
 
 import apply
@@ -36,6 +37,42 @@ def preflight(url):
         return False, ("Playwright is not installed. Run:\n"
                        "  pip install playwright && playwright install chromium")
     return apply.is_automatable(url)
+
+
+def _find_by_label(page, pattern):
+    """Resolve an input via its <label for=...> text — the only reliable handle on
+    per-job custom questions whose input ids are random per posting."""
+    try:
+        rx = re.compile(pattern, re.I)
+        for lb in page.query_selector_all("label[for]"):
+            try:
+                if not rx.search((lb.inner_text() or "").strip()):
+                    continue
+                fid = lb.get_attribute("for") or ""
+                # ids here are ATS-generated (e.g. question_123); quote defensively.
+                if fid and re.fullmatch(r"[A-Za-z0-9_\-:.]+", fid):
+                    el = page.query_selector(f'[id="{fid}"]')
+                    if el:
+                        return el
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def _commit_combobox(page, el):
+    """Autocomplete listboxes (e.g. Greenhouse's country/location combobox) don't
+    accept a bare fill — the value must be chosen from the popup. After typing,
+    pick the first suggestion. No-op for plain text inputs."""
+    try:
+        if (el.get_attribute("role") == "combobox"
+                or el.get_attribute("aria-autocomplete") == "list"):
+            page.wait_for_timeout(800)  # let the suggestion list populate
+            el.press("ArrowDown")
+            el.press("Enter")
+    except Exception:
+        pass
 
 
 def fill_application(url, profile, ats=None):
@@ -71,22 +108,29 @@ def fill_application(url, profile, ats=None):
                 pass
 
         for field in plan:
-            done = False
+            el = None
             for sel in field["selectors"]:
                 try:
                     el = page.query_selector(sel)
-                    if not el:
-                        continue
-                    if field["type"] == "upload":
-                        el.set_input_files(field["value"])
-                    else:
-                        el.fill(str(field["value"]))
-                    filled.append(field["key"])
-                    done = True
-                    break
                 except Exception:
-                    continue
-            if not done:
+                    el = None
+                if el:
+                    break
+            # Last resort: resolve per-job custom questions (random input ids like
+            # Greenhouse question_11163025008) via their <label for=...> text.
+            if el is None and field.get("label_match"):
+                el = _find_by_label(page, field["label_match"])
+            if el is None:
+                skipped.append(field["key"])
+                continue
+            try:
+                if field["type"] == "upload":
+                    el.set_input_files(field["value"])  # works on hidden inputs; fires change
+                else:
+                    el.fill(str(field["value"]))  # Playwright fill fires input+change (React-safe)
+                    _commit_combobox(page, el)
+                filled.append(field["key"])
+            except Exception:
                 skipped.append(field["key"])
 
         # HARD STOP: never submit. Surface a banner and hold the window open until
