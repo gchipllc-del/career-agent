@@ -102,7 +102,7 @@ def build_fill_plan(profile, ats):
         ("email", "Email", profile.get("email", ""), "text",
          ['#email', 'input[type="email"]', 'input[autocomplete="email"]',
           'input[name*="email" i]', 'input[id*="email" i]', 'input[aria-label*="email" i]'],
-         {}),
+         {"ashby": ['input[name="_systemfield_email"]']}),
         ("phone", "Phone", profile.get("phone", ""), "text",
          ['#phone', 'input[type="tel"]', 'input[name*="phone" i]',
           'input[id*="phone" i]', 'input[aria-label*="phone" i]'],
@@ -120,7 +120,7 @@ def build_fill_plan(profile, ats):
          {}),
         ("resume", "Résumé upload", profile.get("resume_path", ""), "upload",
          ['#resume', 'input[name="resume"]', 'input[type="file"]'],
-         {}),
+         {"ashby": ['#_systemfield_resume', 'input[type="file"]']}),
     ]
     plan = []
     for key, label, value, typ, generic, extra in rows:
