@@ -81,35 +81,46 @@ def build_fill_plan(profile, ats):
     full-name vs first/last, so leaving both in the plan is safe — only matching
     selectors fire."""
     full, first, last = _name_parts(profile)
-    # (key, label, value, type, generic_selectors, {ats: [extra_selectors]})
+    # Ordered selector lists, most-specific first (first match wins). The leading
+    # ids/names are GROUND TRUTH verified against live Greenhouse + Lever forms
+    # (2026); aria-label fallbacks catch modern React ATS. Combining them into one
+    # list is safe — a selector that doesn't exist on a given ATS simply doesn't
+    # match and the driver falls through. {ats: [...]} holds truly ATS-unique cases.
+    # (key, label, value, type, selectors, {ats: [extra_prepended]})
     rows = [
         ("first_name", "First name", first, "text",
-         ['input[name*="first" i]', 'input[id*="first" i]', 'input[autocomplete="given-name"]'],
-         {"greenhouse": ['#first_name']}),
+         ['#first_name', 'input[autocomplete="given-name"]', 'input[name*="first" i]',
+          'input[id*="first" i]', 'input[aria-label*="first name" i]'],
+         {}),
         ("last_name", "Last name", last, "text",
-         ['input[name*="last" i]', 'input[id*="last" i]', 'input[autocomplete="family-name"]'],
-         {"greenhouse": ['#last_name']}),
+         ['#last_name', 'input[autocomplete="family-name"]', 'input[name*="last" i]',
+          'input[id*="last" i]', 'input[aria-label*="last name" i]'],
+         {}),
         ("full_name", "Full name", full, "text",
-         ['input[name="name" i]', 'input[id="name" i]', 'input[aria-label*="full name" i]'],
-         {"lever": ['input[name="name"]'], "ashby": ['input[name="_systemfield_name"]']}),
+         ['input[name="name"]', 'input[aria-label*="full name" i]', 'input[id="name" i]'],
+         {"ashby": ['input[name="_systemfield_name"]']}),
         ("email", "Email", profile.get("email", ""), "text",
-         ['input[type="email"]', 'input[name*="email" i]', 'input[id*="email" i]'],
-         {"greenhouse": ['#email'], "lever": ['input[name="email"]']}),
+         ['#email', 'input[type="email"]', 'input[autocomplete="email"]',
+          'input[name*="email" i]', 'input[id*="email" i]', 'input[aria-label*="email" i]'],
+         {}),
         ("phone", "Phone", profile.get("phone", ""), "text",
-         ['input[type="tel"]', 'input[name*="phone" i]', 'input[id*="phone" i]'],
-         {"greenhouse": ['#phone'], "lever": ['input[name="phone"]']}),
+         ['#phone', 'input[type="tel"]', 'input[name*="phone" i]',
+          'input[id*="phone" i]', 'input[aria-label*="phone" i]'],
+         {}),
         ("location", "Location", profile.get("location", ""), "text",
-         ['input[name*="location" i]', 'input[id*="location" i]', 'input[aria-label*="location" i]'],
+         ['#candidate-location', '#location-input', 'input[name="location"]',
+          'input[name*="location" i]', 'input[id*="location" i]', 'input[aria-label*="location" i]'],
          {}),
         ("linkedin", "LinkedIn", profile.get("linkedin", ""), "text",
-         ['input[name*="linkedin" i]', 'input[aria-label*="linkedin" i]'],
-         {"lever": ['input[name="urls[LinkedIn]"]']}),
+         ['input[name="urls[LinkedIn]"]', 'input[name*="linkedin" i]', 'input[aria-label*="linkedin" i]'],
+         {}),
         ("portfolio", "GitHub / portfolio", profile.get("github", "") or profile.get("portfolio", ""), "text",
-         ['input[name*="github" i]', 'input[name*="portfolio" i]', 'input[name*="website" i]'],
-         {"lever": ['input[name="urls[GitHub]"]', 'input[name="urls[Portfolio]"]']}),
+         ['input[name="urls[GitHub]"]', 'input[name="urls[Portfolio]"]', 'input[name*="github" i]',
+          'input[name*="portfolio" i]', 'input[name*="website" i]', 'input[aria-label*="portfolio" i]'],
+         {}),
         ("resume", "Résumé upload", profile.get("resume_path", ""), "upload",
-         ['input[type="file"]'],
-         {"greenhouse": ['input#resume', 'input[type="file"]'], "lever": ['input[name="resume"]']}),
+         ['#resume', 'input[name="resume"]', 'input[type="file"]'],
+         {}),
     ]
     plan = []
     for key, label, value, typ, generic, extra in rows:
