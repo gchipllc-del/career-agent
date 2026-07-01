@@ -177,64 +177,96 @@
     border:1px solid var(--line2);padding:11px 18px;border-radius:11px;font-size:13px;opacity:0;z-index:20;
     transition:.25s;pointer-events:none;box-shadow:0 14px 40px -16px #000}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  /* app chrome: stage nav */
+  header{gap:18px}
+  .brand{display:flex;align-items:center;gap:11px}
+  .brand .bt{font-weight:700;font-size:15px;letter-spacing:.2px}
+  .stages{display:flex;gap:6px;margin:0 auto}
+  .stagetab{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;border-radius:999px;
+    border:1px solid var(--line2);background:var(--panel2);color:var(--mut);font-family:var(--sans);
+    font-size:12.5px;font-weight:600;cursor:pointer;transition:.15s}
+  .stagetab:hover{color:var(--ink)}
+  .stagetab .n{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:11px;
+    font-family:var(--mono);background:var(--line2);color:var(--dim);transition:.15s}
+  .stagetab.active{border-color:var(--teal);color:var(--ink);background:rgba(45,212,191,.08);box-shadow:0 0 0 1px rgba(45,212,191,.15)}
+  .stagetab.active .n{background:linear-gradient(135deg,var(--teal),var(--teal2));color:#04140f}
+  .stagetab.done .n{background:var(--teal-dim);color:#04140f}
+  .headright{display:flex;align-items:center;gap:12px;margin-left:auto}
+  .iconbtn{width:34px;height:34px;padding:0;display:grid;place-items:center;border-radius:9px;
+    background:var(--panel2);border:1px solid var(--line2);color:var(--mut);font-size:15px;cursor:pointer}
+  .iconbtn:hover{color:var(--teal);border-color:var(--teal)}
+  /* guided stages */
+  .app{max-width:1000px;margin:0 auto;padding:24px 26px 64px;position:relative;z-index:1}
+  .stage{display:none;flex-direction:column;gap:20px}
+  .stage.active{display:flex;animation:stageIn .28s ease}
+  @keyframes stageIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  /* settings modal */
+  .overlay{position:fixed;inset:0;z-index:30;background:rgba(4,8,14,.74);backdrop-filter:blur(5px);
+    -webkit-backdrop-filter:blur(5px);display:grid;place-items:center;padding:20px}
+  .overlay[hidden]{display:none}
+  .modal{width:min(560px,94vw);max-height:88vh;overflow:auto;
+    background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line2);
+    border-radius:16px;padding:22px 22px 24px;box-shadow:0 24px 60px -12px rgba(0,0,0,.6)}
+  @media(max-width:780px){ header{flex-wrap:wrap} .stages{order:3;width:100%;justify-content:center;margin:10px 0 0} .headright{margin-left:0} }
 </style>
 </head>
 <body>
 <header>
-  <div class="logo">CA</div>
-  <div>
-    <h1>Autonomous Career Agent</h1>
-    <div class="sub">scrape <b>→</b> sanitize <b>→</b> tailor <b>→</b> validate <b>→</b> human approval</div>
+  <div class="brand"><div class="logo">CA</div><div class="bt">Career Agent</div></div>
+  <nav class="stages" id="stages">
+    <button class="stagetab active" data-stage="find" onclick="showStage('find')"><span class="n">1</span> Find a job</button>
+    <button class="stagetab" data-stage="tailor" onclick="showStage('tailor')"><span class="n">2</span> Tailor &amp; beat ATS</button>
+    <button class="stagetab" data-stage="apply" onclick="showStage('apply')"><span class="n">3</span> Apply</button>
+  </nav>
+  <div class="headright">
+    <button class="iconbtn" id="settingsBtn" title="Settings" onclick="openSettings()">&#9881;</button>
+    <div class="badge" id="engineBadge">engine: <b>&hellip;</b></div>
   </div>
-  <div class="badge" id="engineBadge">engine: <b>…</b></div>
 </header>
 
-<div class="wrap">
-  <!-- INPUTS -->
-  <section class="card left">
-    <h2>Input</h2>
-    <label for="master">Master résumé · source of truth</label>
-    <div id="dropzone" class="dropzone">
-      <textarea id="master" rows="9" placeholder="Paste your résumé, or drop a file below…"></textarea>
-    </div>
-    <div class="dzhint">
-      <span>drop a <b>.pdf</b> / <b>.docx</b> / <b>.txt</b>, or</span>
-      <button class="chip" type="button" onclick="document.getElementById('fileInput').click()">browse…</button>
-      <input id="fileInput" type="file" accept=".txt,.md,.pdf,.docx" hidden />
-    </div>
-
-    <label for="jobtext">Job description · paste, or use a URL below</label>
-    <textarea id="jobtext" rows="6" placeholder="Paste the job posting…"></textarea>
-
-    <label for="joburl">Job URL · scraped only in live mode</label>
-    <input id="joburl" placeholder="https://…  (optional)" />
-
-    <div class="row">
-      <button class="chip" onclick="loadClean()">▸ clean example</button>
-      <button class="chip" onclick="loadInjection()">⚠ injection example</button>
-    </div>
-    <button class="primary" id="runBtn" onclick="run()">Run pipeline</button>
-    <p class="muted" id="hint" style="margin-top:13px;font-family:var(--mono);font-size:11px;color:var(--dim)">
-      Fabrication check &amp; injection scan run for real, even in mock mode.</p>
-  </section>
-
-  <!-- RESULTS -->
-  <section class="right">
+<main class="app">
+  <!-- STAGE 1 - FIND -->
+  <section class="stage active" id="stage-find">
     <div class="card">
-      <h2>Discover jobs</h2>
+      <h2>Your résumé · source of truth</h2>
+      <div id="dropzone" class="dropzone">
+        <textarea id="master" rows="8" placeholder="Paste your résumé, or drop a file below…"></textarea>
+      </div>
+      <div class="dzhint">
+        <span>drop a <b>.pdf</b> / <b>.docx</b> / <b>.txt</b>, or</span>
+        <button class="chip" type="button" onclick="document.getElementById('fileInput').click()">browse…</button>
+        <input id="fileInput" type="file" accept=".txt,.md,.pdf,.docx" hidden />
+      </div>
+    </div>
+    <div class="card">
+      <h2>Find a job</h2>
       <div class="searchrow">
-        <input id="searchq" placeholder="e.g. senior python backend, remote contract…"
-               onkeydown="if(event.key==='Enter')discover()" />
-        <button class="primary" id="searchBtn" onclick="discover()"
-                style="width:auto;margin:0;padding:11px 18px">Search</button>
+        <input id="searchq" placeholder="e.g. cybersecurity analyst 2nd shift, remote…" onkeydown="if(event.key==='Enter')discover()" />
+        <button class="primary" id="searchBtn" onclick="discover()" style="width:auto;margin:0;padding:11px 18px">Search</button>
       </div>
       <div id="searchMeta" class="muted" style="margin-top:8px;font-family:var(--mono);font-size:11px;color:var(--dim)"></div>
       <div id="searchResults"></div>
     </div>
+  </section>
+
+  <!-- STAGE 2 - TAILOR -->
+  <section class="stage" id="stage-tailor">
+    <div class="card">
+      <h2>Job to tailor for</h2>
+      <div id="activeJob" class="muted" style="display:none;margin:0 0 12px;font-family:var(--mono);font-size:11.5px;color:var(--teal)"></div>
+      <label for="jobtext">Job description · paste, or pick one in “Find a job”</label>
+      <textarea id="jobtext" rows="5" placeholder="Paste the job posting…"></textarea>
+      <label for="joburl">Job URL · used for Apply &amp; live scrape</label>
+      <input id="joburl" placeholder="https://…  (optional)" />
+      <div class="row">
+        <button class="chip" onclick="loadClean()">▸ clean example</button>
+        <button class="chip" onclick="loadInjection()">⚠ injection example</button>
+      </div>
+      <button class="primary" id="runBtn" onclick="run()">Run pipeline · tailor &amp; beat the ATS</button>
+    </div>
 
     <div class="card">
       <h2>Pipeline</h2>
-      <div id="activeJob" class="muted" style="display:none;margin:-6px 0 12px;font-family:var(--mono);font-size:11.5px;color:var(--teal)"></div>
       <div class="steps" id="steps">
         <div class="step" data-k="scrape"><div class="dot">1</div><div class="lbl">scrape</div></div>
         <div class="step" data-k="sanitize"><div class="dot">2</div><div class="lbl">sanitize</div></div>
@@ -245,14 +277,8 @@
     </div>
 
     <div class="grid2">
-      <div class="card">
-        <h2>Injection scan</h2>
-        <div id="injBody"><div class="empty">Run the pipeline to scan the posting.</div></div>
-      </div>
-      <div class="card">
-        <h2>Validation</h2>
-        <div id="valBody"><div class="empty">No run yet.</div></div>
-      </div>
+      <div class="card"><h2>Injection scan</h2><div id="injBody"><div class="empty">Run the pipeline to scan the posting.</div></div></div>
+      <div class="card"><h2>Validation · ATS</h2><div id="valBody"><div class="empty">No run yet.</div></div></div>
     </div>
 
     <div class="card">
@@ -269,37 +295,47 @@
         <button class="bad" id="rejectBtn" onclick="decide('reject')">Reject</button>
       </div>
     </div>
+  </section>
 
+  <!-- STAGE 3 - APPLY -->
+  <section class="stage" id="stage-apply">
     <div class="card" id="applyCard">
       <h2>Apply · auto-fill, you submit</h2>
       <p class="muted" style="font-family:var(--mono);font-size:11px;color:var(--dim);margin:0 0 11px">
         Fills the form from your profile + tailored résumé, then <b>pauses at Submit</b> — never auto-submits.
         <span id="pwHint"></span></p>
-
-      <details>
-        <summary style="cursor:pointer;color:var(--mut);font-size:13px;margin-bottom:8px">▾ Your profile · filled into every form</summary>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-          <input id="pf_full_name" placeholder="Full name" />
-          <input id="pf_email" placeholder="Email" />
-          <input id="pf_phone" placeholder="Phone" />
-          <input id="pf_location" placeholder="Location · City, ST" />
-          <input id="pf_linkedin" placeholder="LinkedIn URL" />
-          <input id="pf_github" placeholder="GitHub / portfolio URL" />
-        </div>
-        <button class="chip" onclick="saveProfile()" style="margin-top:8px">Save profile</button>
-      </details>
-
-      <label style="margin-top:13px">Prepare an application · uses your last tailored résumé</label>
+      <label style="margin-top:2px">Prepare an application · uses your last tailored résumé</label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <input id="ap_title" placeholder="Job title" />
         <input id="ap_company" placeholder="Company" />
       </div>
       <input id="ap_url" placeholder="Apply URL · https://boards.greenhouse.io/…" style="margin-top:8px" />
       <button class="primary" onclick="prepareApply()" style="margin-top:9px">Prepare to apply</button>
-
       <div id="applyList"></div>
     </div>
   </section>
+</main>
+
+<div class="overlay" id="settingsOverlay" hidden onclick="if(event.target===this)closeSettings()">
+  <div class="modal">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <h2 style="margin:0">Settings</h2>
+      <button class="iconbtn" onclick="closeSettings()">&#10005;</button>
+    </div>
+    <label style="margin-top:0">Engine</label>
+    <div id="settingsEngine" class="muted" style="font-family:var(--mono);font-size:12px;color:var(--mut)">…</div>
+    <p class="muted" style="font-size:10.5px;color:var(--dim);margin:5px 0 0">Change the model in <b>.env</b> (LLM_PROVIDER / LLM_MODEL) — hosted, or local Ollama for offline/no-account.</p>
+    <label style="margin-top:16px">Your profile · filled into every application</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <input id="pf_full_name" placeholder="Full name" />
+      <input id="pf_email" placeholder="Email" />
+      <input id="pf_phone" placeholder="Phone" />
+      <input id="pf_location" placeholder="Location · City, ST" />
+      <input id="pf_linkedin" placeholder="LinkedIn URL" />
+      <input id="pf_github" placeholder="GitHub / portfolio URL" />
+    </div>
+    <button class="primary" onclick="saveProfile();closeSettings()" style="margin-top:12px">Save profile</button>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -372,11 +408,27 @@ function resetSteps(){ ['scrape','sanitize','tailor','validate','gate'].forEach(
 async function api(path, opts){ const r=await fetch(path,opts); const j=await r.json(); if(!r.ok) throw new Error(j.error||r.status); return j; }
 const apiPost=(path,obj)=>api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj||{})});
 
+// ---- guided stages + settings ----
+const STAGES=['find','tailor','apply'];
+let CUR_STAGE='find';
+function showStage(id){
+  if(!STAGES.includes(id)) return;
+  CUR_STAGE=id; const idx=STAGES.indexOf(id);
+  document.querySelectorAll('.stage').forEach(s=>s.classList.toggle('active', s.id==='stage-'+id));
+  document.querySelectorAll('.stagetab').forEach(t=>{ const i=STAGES.indexOf(t.dataset.stage);
+    t.classList.toggle('active', t.dataset.stage===id); t.classList.toggle('done', i<idx); });
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function openSettings(){ loadProfile(); $('#settingsOverlay').hidden=false; }
+function closeSettings(){ $('#settingsOverlay').hidden=true; }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeSettings(); });
+
 (async function health(){
   try{ const h=await api('/api/health');
     const tail = h.provider ? ` · ${h.provider}${h.model?(' '+h.model):''}` : (h.mock_mode?' · mock':'');
     $('#engineBadge').innerHTML = `engine: <b>${h.engine}</b>${tail}`;
     $('#engineBadge').classList.add('online');
+    const se=$('#settingsEngine'); if(se) se.textContent = h.mock_mode ? 'mock mode (no LLM)' : ((h.provider||'?')+' · '+(h.model||'?'));
     const pw=$('#pwHint'); if(pw) pw.innerHTML = h.autofill
       ? '<span class="pill ok" style="font-size:10px">browser autofill ready</span>'
       : '<span class="pill mut" style="font-size:10px">install Playwright to enable browser autofill</span>';
@@ -547,7 +599,7 @@ async function decide(action){
     if(job.url) $('#ap_url').value=job.url;
     await loadApplications();               // tracker now lists it with an Auto-fill button
     $('#gateMsg').innerHTML='<span class="pill ok">✓ approved · application prepared below ↓</span>';
-    $('#applyCard').scrollIntoView({behavior:'smooth',block:'start'});
+    showStage('apply');
     toast('Application prepared — Auto-fill or open the link in Apply');
   }catch(e){ $('#gateMsg').innerHTML='<span class="pill ok">✓ approved</span>'; toast('Approved (prepare failed: '+e.message+')'); }
 }
@@ -670,7 +722,7 @@ function tailorMatch(i){
   showActiveJob();
   if(($('#master').value||'').trim()){
     toast('Tailoring for "'+(m.title||'this role')+'" …');
-    $('#steps').scrollIntoView({behavior:'smooth',block:'center'});
+    showStage('tailor');
     run();                                   // select a job -> it rewrites, no extra clicks
   } else {
     toast('Job loaded ✓ — add your résumé above, then Run');
