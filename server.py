@@ -12,6 +12,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -129,6 +130,38 @@ def _save_resume(app_id, text):
     path = APPLY_DIR / f"{app_id}.docx"
     path.write_bytes(resume_io.to_docx(text))
     return str(path.resolve())
+
+
+def _engine_status():
+    """Live engine info — reflects runtime provider switches, not import time."""
+    mock = bool(ca.MOCK_MODE) if _HAS_GRAPH else True
+    return {
+        "engine": ENGINE,
+        "mock_mode": mock,
+        "provider": getattr(ca, "ACTIVE_PROVIDER", None) if (_HAS_GRAPH and not mock) else None,
+        "model": getattr(ca, "ACTIVE_MODEL", None) if (_HAS_GRAPH and not mock) else None,
+        "autofill": apply_autofill.HAVE_PLAYWRIGHT,
+    }
+
+
+def _persist_env(updates):
+    """Upsert (or delete on None) KEY=VALUE lines in .env so a provider switch
+    survives a restart. .env is gitignored — keys never reach the repo."""
+    path = Path(".env")
+    lines = path.read_text().splitlines() if path.exists() else []
+    seen, out = set(), []
+    for ln in lines:
+        m = re.match(r"\s*([A-Za-z0-9_]+)\s*=", ln)
+        if m and m.group(1) in updates:
+            seen.add(m.group(1))
+            if updates[m.group(1)] is not None:
+                out.append(f"{m.group(1)}={updates[m.group(1)]}")
+        else:
+            out.append(ln)
+    for k, v in updates.items():
+        if k not in seen and v is not None:
+            out.append(f"{k}={v}")
+    path.write_text("\n".join(out) + "\n")
 
 
 def _public(state):
@@ -270,9 +303,12 @@ class Handler(BaseHTTPRequestHandler):
             except FileNotFoundError:
                 return self._send(500, {"error": "dashboard.html not found"})
         if self.path == "/api/health":
-            return self._send(200, {"engine": ENGINE, "mock_mode": MOCK,
-                                    "provider": PROVIDER, "model": MODEL,
-                                    "autofill": apply_autofill.HAVE_PLAYWRIGHT})
+            return self._send(200, _engine_status())
+        if self.path == "/api/provider":
+            st = _engine_status()
+            st["has_openai_key"] = bool(os.getenv("OPENAI_API_KEY"))
+            st["has_anthropic_key"] = bool(os.getenv("ANTHROPIC_API_KEY"))
+            return self._send(200, st)
         if self.path == "/api/profile":
             return self._send(200, APPLY.get_profile())
         if self.path == "/api/applications":
@@ -380,6 +416,27 @@ class Handler(BaseHTTPRequestHandler):
                 if not isinstance(data, dict):
                     return self._send(400, {"error": "profile must be an object"})
                 return self._send(200, APPLY.set_profile(data))
+
+            if self.path == "/api/provider":
+                if not _HAS_GRAPH:
+                    return self._send(400, {"error": "LLM engine not available in this install"})
+                data = self._body()
+                provider = (data.get("provider") or "").strip().lower()
+                model = (data.get("model") or "").strip()
+                api_key = (data.get("api_key") or "").strip()
+                if provider not in ("anthropic", "ollama", "groq", "openrouter", "cerebras", "openai"):
+                    return self._send(400, {"error": "unknown provider"})
+                ca.apply_provider(provider, model, api_key)  # rebuilds the live LLM
+                env = {"LLM_PROVIDER": provider, "LLM_MODEL": (model or None)}
+                if api_key:
+                    env["ANTHROPIC_API_KEY" if provider == "anthropic" else "OPENAI_API_KEY"] = api_key
+                try:
+                    _persist_env(env)  # survive restart (.env gitignored)
+                except Exception:
+                    pass
+                st = _engine_status()
+                st["switched"] = True
+                return self._send(200, st)  # never returns the key
 
             if self.path == "/api/apply/prepare":
                 data = self._body()

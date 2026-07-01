@@ -322,9 +322,15 @@
       <h2 style="margin:0">Settings</h2>
       <button class="iconbtn" onclick="closeSettings()">&#10005;</button>
     </div>
-    <label style="margin-top:0">Engine</label>
-    <div id="settingsEngine" class="muted" style="font-family:var(--mono);font-size:12px;color:var(--mut)">…</div>
-    <p class="muted" style="font-size:10.5px;color:var(--dim);margin:5px 0 0">Change the model in <b>.env</b> (LLM_PROVIDER / LLM_MODEL) — hosted, or local Ollama for offline/no-account.</p>
+    <label style="margin-top:0">Model · now: <span id="settingsEngine" style="color:var(--teal);font-family:var(--mono);font-weight:600">…</span></label>
+    <select id="provPreset" onchange="onPreset()" style="width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:11px 12px;font-family:var(--mono);font-size:12.5px"></select>
+    <input id="provModel" placeholder="model id" style="margin-top:8px" />
+    <div id="provKeyWrap" style="margin-top:8px;display:none">
+      <input id="provKey" type="password" placeholder="API key · stays on your machine" autocomplete="off" />
+      <div id="provKeyHint" class="muted" style="font-size:10.5px;color:var(--dim);margin-top:4px"></div>
+    </div>
+    <div id="provNote" class="muted" style="font-size:10.5px;color:var(--dim);margin-top:7px"></div>
+    <button class="chip" onclick="saveProvider()" style="margin-top:10px">Save &amp; switch model</button>
     <label style="margin-top:16px">Your profile · filled into every application</label>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
       <input id="pf_full_name" placeholder="Full name" />
@@ -423,6 +429,41 @@ function openSettings(){ loadProfile(); $('#settingsOverlay').hidden=false; }
 function closeSettings(){ $('#settingsOverlay').hidden=true; }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeSettings(); });
 
+const PROVIDER_PRESETS = [
+  {label:'OpenRouter · gpt-oss-120b (free)', provider:'openrouter', model:'openai/gpt-oss-120b:free', key:true, keyHint:'sk-or-v1-…  free key at openrouter.ai/keys — your own key dodges the shared rate limit', note:'Free model. Add your OWN OpenRouter key to avoid the shared 429 limit.'},
+  {label:'OpenRouter · DeepSeek V3 (paid, cheap)', provider:'openrouter', model:'deepseek/deepseek-chat-v3', key:true, keyHint:'sk-or-v1-…  needs a little OpenRouter credit', note:'Frontier-quality, reliable, ~pennies per résumé.'},
+  {label:'Local · Ollama DeepSeek (offline, no account)', provider:'ollama', model:'deepseek-r1:8b', key:false, note:'Runs on your machine, no key, fully private. Install Ollama + pull the model. Slow on old CPUs; use deepseek-r1:1.5b there.'},
+  {label:'Groq · Llama-3.3-70B (free, fast)', provider:'groq', model:'llama-3.3-70b-versatile', key:true, keyHint:'gsk_…  free, no card at console.groq.com/keys', note:'Fast free tier, more reliable than shared OpenRouter.'},
+  {label:'Anthropic · Claude Opus (best, paid)', provider:'anthropic', model:'claude-opus-4-8', key:true, keyHint:'sk-ant-…  console.anthropic.com', note:'Highest quality, fewest re-tries. ~1-2¢ per run.'},
+];
+function fillPresets(cur){
+  const sel=$('#provPreset'); if(!sel) return;
+  sel.innerHTML=PROVIDER_PRESETS.map((p,i)=>`<option value="${i}">${esc(p.label)}</option>`).join('');
+  if(cur&&cur.provider){ const i=PROVIDER_PRESETS.findIndex(p=>p.provider===cur.provider&&p.model===cur.model); if(i>=0) sel.value=i; }
+  onPreset();
+}
+function onPreset(){
+  const p=PROVIDER_PRESETS[+($('#provPreset').value||0)]||PROVIDER_PRESETS[0];
+  $('#provModel').value=p.model;
+  $('#provKeyWrap').style.display=p.key?'':'none';
+  $('#provKeyHint').textContent=p.keyHint||'';
+  if(!p.key) $('#provKey').value='';
+  $('#provNote').textContent=p.note||'';
+}
+async function saveProvider(){
+  const p=PROVIDER_PRESETS[+($('#provPreset').value||0)]||PROVIDER_PRESETS[0];
+  const body={provider:p.provider, model:($('#provModel').value||'').trim(), api_key:($('#provKey').value||'').trim()};
+  try{
+    const r=await apiPost('/api/provider',body);
+    $('#provKey').value='';
+    const label = r.mock ? 'mock (no LLM / no key)' : (r.provider+' · '+r.model);
+    if($('#settingsEngine')) $('#settingsEngine').textContent=label;
+    $('#engineBadge').innerHTML = r.mock ? 'engine: <b>mock</b>' : `engine: <b>${esc(r.engine)}</b> · ${esc(r.provider)} ${esc(r.model)}`;
+    $('#engineBadge').classList.toggle('online', !r.mock);
+    toast(r.mock ? 'Switched, but no key set — running mock. Add a key.' : ('Now using '+r.provider+' · '+r.model));
+  }catch(e){ toast('Switch failed: '+e.message); }
+}
+
 (async function health(){
   try{ const h=await api('/api/health');
     const tail = h.provider ? ` · ${h.provider}${h.model?(' '+h.model):''}` : (h.mock_mode?' · mock':'');
@@ -432,7 +473,7 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeSettings(); }
     const pw=$('#pwHint'); if(pw) pw.innerHTML = h.autofill
       ? '<span class="pill ok" style="font-size:10px">browser autofill ready</span>'
       : '<span class="pill mut" style="font-size:10px">install Playwright to enable browser autofill</span>';
-    loadProfile(); loadApplications();
+    loadProfile(); loadApplications(); fillPresets(h);
   }catch(e){ OFFLINE=true; $('#engineBadge').innerHTML='engine: <b>browser</b> · offline'; }
 })();
 

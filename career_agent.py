@@ -114,6 +114,28 @@ LLM, ACTIVE_PROVIDER, ACTIVE_MODEL = _build_llm()
 MOCK_MODE = LLM is None
 
 
+def apply_provider(provider=None, model="", api_key=""):
+    """Switch the live LLM at runtime (Settings UI). Updates os.environ + the
+    module globals the nodes read, then rebuilds. The API key (if given) is routed
+    to the right env var. Returns {provider, model, mock}. Never logs the key."""
+    global LLM, ACTIVE_PROVIDER, ACTIVE_MODEL, MOCK_MODE, _provider, LLM_API_KEY
+    prov = (provider or _provider or "groq").strip().lower()
+    os.environ["LLM_PROVIDER"] = prov
+    m = (model or "").strip()
+    if m:
+        os.environ["LLM_MODEL"] = m
+    else:
+        os.environ.pop("LLM_MODEL", None)  # blank -> _build_llm uses provider default
+    if api_key and api_key.strip():
+        (os.environ.__setitem__)("ANTHROPIC_API_KEY" if prov == "anthropic" else "OPENAI_API_KEY",
+                                 api_key.strip())
+    _provider = prov
+    LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+    LLM, ACTIVE_PROVIDER, ACTIVE_MODEL = _build_llm()
+    MOCK_MODE = LLM is None
+    return {"provider": ACTIVE_PROVIDER, "model": ACTIVE_MODEL, "mock": MOCK_MODE}
+
+
 class ApplicationState(TypedDict):
     job_url: str
     master_resume: str
