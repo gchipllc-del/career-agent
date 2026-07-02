@@ -127,8 +127,13 @@ def apply_provider(provider=None, model="", api_key=""):
     else:
         os.environ.pop("LLM_MODEL", None)  # blank -> _build_llm uses provider default
     if api_key and api_key.strip():
-        (os.environ.__setitem__)("ANTHROPIC_API_KEY" if prov == "anthropic" else "OPENAI_API_KEY",
-                                 api_key.strip())
+        if prov == "anthropic":
+            os.environ["ANTHROPIC_API_KEY"] = api_key.strip()
+        else:
+            os.environ["OPENAI_API_KEY"] = api_key.strip()
+            # LLM_API_KEY (if set) outranks OPENAI_API_KEY in _build_llm — a stale
+            # one would silently shadow the key the user just supplied.
+            os.environ["LLM_API_KEY"] = api_key.strip()
     _provider = prov
     LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
     LLM, ACTIVE_PROVIDER, ACTIVE_MODEL = _build_llm()
@@ -199,8 +204,10 @@ def _strip_reasoning(text):
     thinking out loud. No-op for models that don't emit it."""
     if "</think>" in text:
         text = re.sub(r"(?is)<think>.*?</think>", "", text)
-        if "</think>" in text:  # truncated/unmatched closing tag -> keep what follows
+        if "</think>" in text:  # unmatched closing tag -> keep what follows
             text = text.rsplit("</think>", 1)[-1]
+    if "<think>" in text:  # truncated output: opener with no close -> drop the tail
+        text = text.split("<think>", 1)[0]
     return text.strip()
 
 
@@ -328,10 +335,12 @@ def validate_payload_node(state: ApplicationState) -> Dict[str, Any]:
     # fabrication guard above still blocks any invented skill). This is the
     # "beat the ATS every time" engine: iterate until the score clears, or land
     # in human review with the gap named when the master genuinely lacks it.
-    ats_result = ats.score(state.get("scraped_job_spec", ""), tailored)
-    # Gate only in real mode: mock_tailor is a no-backend demo that doesn't
-    # keyword-tailor, so gating it on ATS would never reach the approval gate.
-    if passed and not MOCK_MODE and not ats_result["passes"]:
+    job_spec = state.get("scraped_job_spec", "")
+    has_real_jd = bool(job_spec) and job_spec != "(no job description provided)"
+    ats_result = ats.score(job_spec, tailored) if has_real_jd else {}
+    # Gate only in real mode WITH a real JD: mock_tailor is a no-backend demo, and
+    # scoring against the placeholder would send every no-JD run to manual review.
+    if passed and not MOCK_MODE and has_real_jd and not ats_result["passes"]:
         passed = False
         notes = f"{ats.feedback(ats_result)} (no fabrication detected — keep it truthful)"
 

@@ -319,18 +319,29 @@ def dedupe(records):
 
 def search_all(query, adapters=None):
     """Fan out across adapters concurrently, merge + dedupe. One failing source
-    never sinks the search — it lands in sources_skipped."""
+    never sinks the search — it lands in sources_skipped. A straggler that blows
+    the overall budget is also skipped: partial results beat a 500, and we don't
+    block on the hung thread (shutdown(cancel_futures) + daemon-style abandon)."""
     adapters = adapters if adapters is not None else ADAPTERS
     results, ok, skipped = [], [], []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(adapters))) as ex:
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(adapters)))
+    try:
         futs = {ex.submit(a, query): getattr(a, "__name__", "source") for a in adapters}
-        for fut in concurrent.futures.as_completed(futs, timeout=TIMEOUT + 10):
+        done, not_done = concurrent.futures.wait(futs, timeout=TIMEOUT + 10)
+        for fut in done:
             name = futs[fut]
             try:
                 results.extend(fut.result())
                 ok.append(name)
             except Exception:
                 skipped.append(name)
+        for fut in not_done:
+            fut.cancel()
+            skipped.append(futs[fut])
+    finally:
+        # Don't join stragglers — return partial results now; the worker threads
+        # die with their sockets when their timeout fires.
+        ex.shutdown(wait=False, cancel_futures=True)
     return {"results": dedupe(results), "sources_ok": sorted(ok), "sources_skipped": sorted(skipped)}
 
 

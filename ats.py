@@ -28,14 +28,17 @@ _REQ_LINE = re.compile(
 )
 
 
-def _kw(text):
-    """Tokenize like core.jd_coverage so scores line up with the gap analysis."""
-    out = set()
-    for w in re.findall(r"[a-z][a-z0-9+#.\-]+", (text or "").lower()):
-        w = w.strip(".-#")
-        if len(w) >= 3 and w not in core._COVERAGE_STOP:
-            out.add(w)
-    return out
+# The shared tokenizer (cached) — keeps this scorer's vocabulary identical to
+# core.jd_coverage's gap analysis and avoids re-tokenizing the same JD ~12x/run.
+_kw = core.keywords
+
+# Words that TRIGGER the requirement-line detector but aren't skills themselves —
+# without this filter they'd count as "required keywords" and distort the score's
+# dominant (0.55) component.
+_REQ_NOISE = frozenset((
+    "least minimum minimums essential qualification qualifications proficiency "
+    "proficient expert expertise require requires required requirement strong"
+).split())
 
 
 def _title_keywords(job_text):
@@ -50,7 +53,7 @@ def _required_keywords(job_text):
     for ln in (job_text or "").splitlines():
         if _REQ_LINE.search(ln):
             req |= _kw(ln)
-    return req
+    return req - _REQ_NOISE  # trigger words aren't skills
 
 
 def score(job_text, resume_text):

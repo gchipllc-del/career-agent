@@ -9,6 +9,7 @@ Run:  python3 server.py     then open  http://127.0.0.1:8000
 """
 
 import base64
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -147,7 +148,13 @@ def _engine_status():
 def _persist_env(updates):
     """Upsert (or delete on None) KEY=VALUE lines in .env so a provider switch
     survives a restart. .env is gitignored — keys never reach the repo."""
-    path = Path(".env")
+    # Write the .env NEXT TO THIS MODULE — the one localenv.load() actually reads.
+    # Path(".env") would silently write to whatever CWD the server started from.
+    path = Path(__file__).with_name(".env")
+    for k, v in updates.items():
+        # A CR/LF smuggled through model/api_key could inject arbitrary env lines.
+        if re.search(r"[\r\n]", f"{k}{'' if v is None else v}"):
+            raise ValueError("refusing to write a multi-line value to .env")
     lines = path.read_text().splitlines() if path.exists() else []
     seen, out = set(), []
     for ln in lines:
@@ -247,6 +254,15 @@ def _run_worker(run_id, channel, master, job_text, job_url):
                 channel.push(ev)
     except Exception as exc:
         channel.push({"event": "error", "message": f"{type(exc).__name__}: {exc}"})
+    finally:
+        # Prune the channel or PROGRESS grows for the life of the process. The
+        # grace period lets a just-reconnecting client replay the final event.
+        def _prune():
+            with PROGRESS_LOCK:
+                PROGRESS.pop(run_id, None)
+        t = threading.Timer(60, _prune)
+        t.daemon = True
+        t.start()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -332,6 +348,15 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        # Same-origin defense: a malicious web page can fire drive-by POSTs at
+        # 127.0.0.1 (forms / no-cors fetch). Browsers ALWAYS attach Origin to
+        # cross-origin POSTs — reject any that isn't ours. Local tools (curl,
+        # the dashboard's same-origin fetches) send none or a matching one.
+        origin = (self.headers.get("Origin") or "").rstrip("/")
+        if origin:
+            host = self.headers.get("Host") or ""
+            if origin not in (f"http://{host}", f"https://{host}"):
+                return self._send(403, {"error": "cross-origin request rejected"})
         try:
             if self.path == "/api/runs":
                 data = self._body()
@@ -357,24 +382,55 @@ class Handler(BaseHTTPRequestHandler):
                 query = (data.get("query") or "").strip()
                 if not query:
                     return self._send(400, {"error": "query is required"})
-                # General feeds are query-independent -> cache once (6h), shared
-                # across queries (respects Remotive's ~4/day cap).
-                feed = RUNS.get_cache("jobfeed", max_age=6 * 3600)
-                feed_cached = feed is not None
-                if feed is None:
-                    feed = jobs_search.search_all(query, adapters=jobs_search.FEED_ADAPTERS)
-                    RUNS.put_cache("jobfeed", feed, time.time())
-                # Keyword search (Adzuna) IS query-specific -> cache per query.
                 qkey = "kw:" + hashlib.sha1(query.lower().encode()).hexdigest()[:16]
-                kw = RUNS.get_cache(qkey, max_age=6 * 3600)
-                if kw is None:
-                    kw = jobs_search.search_all(query, adapters=jobs_search.KEYWORD_ADAPTERS)
-                    RUNS.put_cache(qkey, kw, time.time())
+
+                # Three independent slow units (feed fetch / keyword fetch / LLM
+                # expansion) run CONCURRENTLY — serially a cold search paid for
+                # all three end to end. Each caches only on success so a transient
+                # total failure isn't frozen for 6h.
+                def _get_feed():
+                    # General feeds are query-independent -> cache once (6h),
+                    # shared across queries (respects Remotive's ~4/day cap).
+                    cached = RUNS.get_cache("jobfeed", max_age=6 * 3600)
+                    if cached is not None:
+                        return cached, True
+                    r = jobs_search.search_all(query, adapters=jobs_search.FEED_ADAPTERS)
+                    if r.get("sources_ok"):
+                        RUNS.put_cache("jobfeed", r, time.time())
+                    return r, False
+
+                def _get_kw():
+                    # Keyword search IS query-specific -> cache per query.
+                    cached = RUNS.get_cache(qkey, max_age=6 * 3600)
+                    if cached is not None:
+                        return cached
+                    r = jobs_search.search_all(query, adapters=jobs_search.KEYWORD_ADAPTERS)
+                    if r.get("sources_ok"):
+                        RUNS.put_cache(qkey, r, time.time())
+                    return r
+
+                def _get_terms():
+                    # Expansion is deterministic per query+model -> cache it too
+                    # (was a redundant LLM call on every repeat search).
+                    model = getattr(ca, "ACTIVE_MODEL", "") if _HAS_GRAPH else ""
+                    ekey = "exp:" + hashlib.sha1(f"{query.lower()}|{model}".encode()).hexdigest()[:16]
+                    cached = RUNS.get_cache(ekey, max_age=6 * 3600)
+                    if cached is not None:
+                        return cached
+                    llm = ca.LLM if (_HAS_GRAPH and not ca.MOCK_MODE) else None
+                    t = jobs_search.expand_query(query, llm=llm)
+                    RUNS.put_cache(ekey, t, time.time())
+                    return t
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                    f_feed = pool.submit(_get_feed)
+                    f_kw = pool.submit(_get_kw)
+                    f_terms = pool.submit(_get_terms)
+                    feed, feed_cached = f_feed.result()
+                    kw = f_kw.result()
+                    terms = f_terms.result()
                 merged = jobs_search.dedupe(feed.get("results", []) + kw.get("results", []))
-                # Expand the query (LLM when a real provider is live) and rank with
-                # the distinctive-term gate so generic words don't float junk up.
-                llm = ca.LLM if (_HAS_GRAPH and not ca.MOCK_MODE) else None
-                terms = jobs_search.expand_query(query, llm=llm)
+                # Rank with the distinctive-term gate so generic words don't float junk up.
                 ranked = jobs_search.rank_matches(terms, merged, min_score=0.03, gate=True)[:50]
                 sources_ok = sorted(set(feed.get("sources_ok", []) + kw.get("sources_ok", [])))
                 sources_skipped = sorted(set(feed.get("sources_skipped", []) + kw.get("sources_skipped", [])))
@@ -402,6 +458,9 @@ class Handler(BaseHTTPRequestHandler):
                 text = data.get("text") or ""
                 fmt = (data.get("format") or "docx").lower()
                 base = (data.get("filename") or "tailored_resume").rsplit(".", 1)[0]
+                # The name lands in a Content-Disposition header — a CRLF or quote
+                # in it is header injection. Restrict to a safe charset.
+                base = re.sub(r"[^A-Za-z0-9._-]+", "_", base)[:80] or "tailored_resume"
                 if fmt == "txt":
                     return self._send_download(resume_io.to_txt(text), base + ".txt",
                                                "text/plain; charset=utf-8")
@@ -508,7 +567,14 @@ class Handler(BaseHTTPRequestHandler):
                 if action == "approve":
                     if run["status"] != "awaiting_approval":
                         return self._send(409, {"error": "run is not awaiting approval"})
-                    engine_submit(run_id)  # before persisting: if it raises, status stays
+                    try:
+                        engine_submit(run_id)  # before persisting: if it raises, status stays
+                    except Exception:
+                        # In-memory checkpoint didn't survive a restart -> the graph
+                        # can't resume. 409 with a clear next step beats a 500.
+                        return self._send(409, {"error": (
+                            "this run predates the current server session and can't be "
+                            "resumed — re-run the tailoring, then approve")})
                     RUNS.set_status(run_id, "submitted")
                     run["status"] = "submitted"
                     return self._send(200, {"run_id": run_id, **run})

@@ -8,6 +8,7 @@ pipeline (run_pipeline, used by server.py when LangGraph isn't installed).
 Pure stdlib — runs on stock Python 3.9 with nothing to pip install.
 """
 
+import functools
 import re
 import secrets
 import unicodedata
@@ -131,7 +132,10 @@ def fabrication_flags(master_resume, tailored_resume):
     """Advisory tripwire: numbers/years present in the tailored resume but
     nowhere in the master — a cheap signal for invented metrics and dates."""
     pattern = r"\d[\d,.]*"
-    clean = lambda t: {n.strip(".,") for n in re.findall(pattern, t or "")}
+    # Normalize formatting so "1,000" == "1000" — a reformatted number is not a
+    # fabricated one (this guard is authoritative over the LLM verdict).
+    clean = lambda t: {n.strip(".,").replace(",", "")
+                       for n in re.findall(pattern, t or "")}
     new_numbers = clean(tailored_resume) - clean(master_resume)
     new_numbers.discard("")
     return ", ".join(sorted(new_numbers, key=lambda s: (len(s), s)))
@@ -152,18 +156,27 @@ _COVERAGE_STOP = set((
 ).split())
 
 
+_KW_RX = re.compile(r"[a-z][a-z0-9+#.\-]+")
+
+
+@functools.lru_cache(maxsize=128)
+def keywords(text):
+    """Skill-ish keyword set for a text. THE shared tokenizer — jd_coverage and
+    the ATS scorer (ats.py) both delegate here so their vocabularies can't drift,
+    and the cache stops the same JD being re-tokenized ~12x per pipeline run."""
+    out = set()
+    for w in _KW_RX.findall((text or "").lower()):
+        w = w.strip(".-#")  # drop edge punctuation so "docker." == "docker"
+        if len(w) >= 3 and w not in _COVERAGE_STOP:
+            out.add(w)
+    return frozenset(out)
+
+
 def jd_coverage(job_text, resume_text):
     """Gap analysis: what fraction of the job description's keywords appear in the
     résumé, and which notable JD keywords are missing. Pure stdlib; advisory only
     (never a hard fail). Ported in spirit from ResumeFlow (MIT)."""
-    def kw(t):
-        out = set()
-        for w in re.findall(r"[a-z][a-z0-9+#.\-]+", (t or "").lower()):
-            w = w.strip(".-#")  # drop edge punctuation so "docker." == "docker"
-            if len(w) >= 3 and w not in _COVERAGE_STOP:
-                out.add(w)
-        return out
-    jd, res = kw(job_text), kw(resume_text)
+    jd, res = keywords(job_text), keywords(resume_text)
     if not jd:
         return {"overlap": 0.0, "missing": []}
     present = jd & res
@@ -196,7 +209,9 @@ def humanize(text):
         return text
     text = text.translate(_HUMANIZE_MAP)
     text = re.sub(r"(\d)\s+%", r"\1%", text)      # "30 %" -> "30%"
-    text = re.sub(r"[ \t]{2,}", " ", text)         # collapse runs of spaces (em-dash spacing etc.)
+    # Collapse INTERIOR runs of spaces only (em-dash spacing etc.) — leading
+    # indentation is layout (nested bullets) and must survive.
+    text = re.sub(r"(?m)(?<=\S)[ \t]{2,}", " ", text)
     text = re.sub(r"[ \t]+\n", "\n", text)         # drop trailing spaces
     return text
 
@@ -209,7 +224,7 @@ def strip_markdown(text):
         s = line.rstrip()
         if re.fullmatch(r"\s*[-*_]{3,}\s*", s):    # --- *** ___ divider -> drop
             continue
-        s = re.sub(r"^\s*#{1,6}\s*", "", s)         # ### Header -> Header
+        s = re.sub(r"^\s*#{1,6}\s+", "", s)         # "### Header" -> Header; keeps "#1 sales rep"
         s = re.sub(r"\*\*(.+?)\*\*", r"\1", s)      # **bold** -> bold
         s = re.sub(r"`([^`]+)`", r"\1", s)          # `code` -> code
         out.append(s)
